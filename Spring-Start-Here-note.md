@@ -377,7 +377,7 @@ Whenever you work with a new Spring project, you can search for the dependencies
 
   With this annotation, you define a method that Spring calls immediately before closing and clearing the context. But generally I recommend developers avoid using it and find a different approach to executing something before Spring clears the context, *mainly because you can expect Spring to fail to clear the context*. Say you defined something sensitive (like closing a database connection) in the @PreDestroy method; if Spring doesn’t call the method, you may get into big problems.
 
-
+* 使用类似@Component这样的stereotype annotation（模式注解）来创建bean，默认 bean 名 = 类名首字母小写。例如Parrot类的bean默认bean名为parrot。当然也可以用@Qualifier注解显式自定义指定bean名称。
 
 ### 2.3.3 编程式
 
@@ -1463,3 +1463,103 @@ class上，因为注解是用于让Spring扫描到这个类，然后实例化这
 如果全部都使用@Component注解，实际上代码的层次并不明显，可读性不够好。
 
 使用@Service注解来标识专门负责提供服务的Bean，使用@Repository注解来标识专门负责进行DB操作的Bean，无特殊含义的Bean用@Component注解标识，这样代码的可能性更佳，层次更加明显。
+
+
+
+# 5. Bean scopes and life cycle
+
+## 5.1 Bean scopes
+
+### 5.1.1 Singleton
+
+* 是什么：Spring中的Singleton作用域，不是代表一个类只能有一个Bean。相反，一个类可以有多个Bean，但*每个Bean都有自己唯一的 bean 名称，或者说 Bean id* 。
+
+![image-20251106094636244](asset/image-20251106094636244.png)
+
+* 是否要使用单例模式：
+
+  * 使用单例模式需要保证这个bean是不可变的。因为如果使用单例模式，则在多线程场景下，这多个线程共享这一个单例bean，如果这个bean是可变的，在多线程并发场景下，会出现竞态条件。则需要额外加锁来保证线程安全，影响性能。
+
+    ![image-20251106112819353](asset/image-20251106112819353.png)
+
+  * 如果这个bean需要可变，则可以使用多例模式。
+
+* eager instantiation or lazy instantiation：
+
+  * eager instantiation（默认）：Spring会在初始化context的时候就创建所有单例bean。
+
+    示例：
+
+    ```java
+    // Service
+    @Service
+    public class CommentService {
+        public CommentService() {
+            System.out.println("CommentService instance created.");
+        }
+    }
+    ```
+
+    ```java
+    // 配置类
+    @Configuration
+    @ComponentScan(basePackages = "com.tudou")
+    public class ProjectConfig {
+    }
+    ```
+
+    ```java
+    public class Main {
+        public static void main(String[] args) {
+            AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext(ProjectConfig.class);
+        }
+    }
+    ```
+
+    ```java
+    // 控制台打印
+    CommentService instance created.
+    ```
+
+    可以看到，代码中并没有真正用到commentService这个bean，但是却被初始化了。
+
+    
+
+  * lazy instantiation：Spring只有在第一次用到这个单例bean的时候，才会创建这个bean。
+
+    示例：
+
+    ```java
+    // Service
+    @Service
+    @Lazy  // 开启懒加载
+    public class CommentService {
+        public CommentService() {
+            System.out.println("CommentService instance created.");
+        }
+    }
+    ```
+
+    ```java
+    public class Main {
+        public static void main(String[] args) {
+            AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext(ProjectConfig.class);
+            System.out.println("Before retrieving the CommentService");
+            CommentService service = context.getBean(CommentService.class);
+            System.out.println("After retrieving the CommentService");
+        }
+    }
+    ```
+
+    ```java
+    // 控制台打印
+    Before retrieving the CommentService
+    CommentService instance created.
+    After retrieving the CommentService
+    ```
+
+    可以看到，只有在真正使用commentService这个bean的时候，才会创建该bean。
+
+  * 对比
+    * eager instantiation：要用的时候就有；如果bean的创建存在异常，可以在启动Spring应用程序的时候就马上发现；【推荐使用】
+    * lazy instantiation：用之前需要检查是否存在，如果不存在还要创建，影响性能；如果bean的创建存在异常，无法马上发现，需要后续用到该bean的时候才能被发现；
