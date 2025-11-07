@@ -1563,3 +1563,240 @@ class上，因为注解是用于让Spring扫描到这个类，然后实例化这
   * 对比
     * eager instantiation：要用的时候就有；如果bean的创建存在异常，可以在启动Spring应用程序的时候就马上发现；【推荐使用】
     * lazy instantiation：用之前需要检查是否存在，如果不存在还要创建，影响性能；如果bean的创建存在异常，无法马上发现，需要后续用到该bean的时候才能被发现；
+
+### 5.1.2 Prototype
+
+* 是什么：每一次尝试从Spring容器获取作用域为prototype的bean，Spring都会创建一个新bean返回。
+
+  例如下图，CommentService这个类的作用域为prototype，每一次调用context.getBean(CommentService.class)的时候，都会创建一个新bean，因此`cs1==cs2`结果永远为false。
+
+  ![image-20251107105131491](asset/image-20251107105131491.png)
+
+* 应用场景：如果一个bean是Prototype的作用域，那么在多线程场景下，每个线程拿到的bean都是不同的，因此是线程安全的，可以随意修改bean。
+
+  ![image-20251107105640890](asset/image-20251107105640890.png)
+
+* 如何将bean定义为Prototype的作用域？
+
+  在所有定义Bean的地方，增加上`@Scope(BeanDefinition.SCOPE_PROTOTYPE)`注解。
+
+  * 例1：使用@Bean定义Bean
+
+    ```java
+    // Service类
+    public class CommentService {
+    }
+    ```
+
+    ```java
+    // 配置类
+    @Configuration
+    public class ProjectConfig {
+    
+        @Bean
+        @Scope(BeanDefinition.SCOPE_PROTOTYPE)  // 确定作用域
+        public CommentService commentService() {
+            return new CommentService();
+        }
+    }
+    ```
+
+    ```java
+    public class Main {
+        public static void main(String[] args) {
+            AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext(ProjectConfig.class);
+            CommentService cs1 = context.getBean(CommentService.class);
+            CommentService cs2 = context.getBean(CommentService.class);
+            System.out.println(cs1 == cs2);  // false
+        }
+    }
+    ```
+
+    
+
+  * 例2：使用模板注解定义Bean
+
+    ```java
+    // Repository类
+    @Repository
+    @Scope(BeanDefinition.SCOPE_PROTOTYPE)
+    public class CommentRepository {
+    }
+    ```
+
+    ```java
+    // Service类
+    @Service
+    public class CommentService {
+        // 字段注入
+        @Autowired
+        private CommentRepository commentRepository;
+    
+        public CommentRepository getCommentRepository() {
+            return commentRepository;
+        }
+    }
+    ```
+
+    ```java
+    // Service类
+    @Service
+    public class UserService {
+        // 字段注入
+        @Autowired
+        private CommentRepository commentRepository;
+    
+        public CommentRepository getCommentRepository() {
+            return commentRepository;
+        }
+    }
+    ```
+
+    ```java
+    public class Main {
+        public static void main(String[] args) {
+            AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext(ProjectConfig.class);
+            CommentService commentService = context.getBean(CommentService.class);
+            UserService userService = context.getBean(UserService.class);
+            // 结果为false
+            // 说明每次注入的都是一个新bean
+            System.out.println(userService.getCommentRepository() == commentService.getCommentRepository());
+        }
+    }
+    ```
+
+* 什么时候要将Bean的作用域定义为Prototype？
+
+  示例：
+
+  假设当前有一个CommentProcessor类，负责处理Comment和验证Comment。CommentService类需要调用CommentProcessor实例来对Comment进行处理。
+
+  ```java
+  // CommentProcessor类
+  public class CommentProcessor {
+      private Comment comment;
+  
+      public Comment getComment() {
+          return comment;
+      }
+  
+      public void setComment(Comment comment) {
+          this.comment = comment;
+      }
+  
+      public void processComment() {
+          // changing the comment attribute
+      }
+  
+      public void validateComment() {
+          // validating and changing the comment attribute
+      }
+  }
+  ```
+
+  ```java
+  @Service
+  public class CommentService {
+      public void sendComment(Comment c) {
+          CommentProcessor processor = new CommentProcessor();
+          processor.setComment(c);
+          // Uses the CommentProcessor instance to 
+          // alter the Comment instance
+          processor.processComment();
+          processor.validateComment();
+      }
+  }
+  ```
+
+  这里并没有将CommentProcessor类设置为bean，因为CommentProcessor这个类本身*并不需要使用 Spring 提供的任何功能*，因此CommentProcessor不需要作为bean加入Spring容器。
+
+  假如说，现在场景变成这样：
+
+  CommentRepository是一个bean，而CommentProcessor需要调用这个bean来实现对Comment的持久化。
+
+  ![image-20251107174001791](asset/image-20251107174001791.png)
+
+  而在CommentProcessor中获取CommentRepository bean最简单的方式，就是通过Spring的依赖注入。这里CommentProcessor要用到Spring的功能，因此也将其作为bean，加入到Spring容器中。
+
+  这里的CommentProcessor作用域为prototype，因为CommentService需要调用CommentProcessor实例的方法来对comment对象进行处理，如果CommentProcessor是单例的话，则CommentService每次调用sendComment方法的时候，对comment进行处理的都是同一个CommentProcessor实例。这样在多线程的场景下，会存在竞态条件。
+
+  所以，需要保证CommentService每一次调用sendComment方法的时候，处理comment的CommentProcessor实例都是不同的，以避免出现竞态条件。
+
+  ```java
+  @Component
+  @Scope(BeanDefinition.SCOPE_PROTOTYPE)
+  public class CommentProcessor {
+      private Comment comment;
+  
+      @Autowired
+      private CommentRepository commentRepository;
+  
+      public Comment getComment() {
+          return comment;
+      }
+  
+      public void setComment(Comment comment) {
+          this.comment = comment;
+      }
+  
+      public void processComment() {
+          // changing the comment attribute
+      }
+  
+      public void validateComment() {
+          // validating and changing the comment attribute
+      }
+  }
+  ```
+
+  那我们的CommentService应该怎么改来注入CommentProcessor呢？
+
+  下面这样吗？
+
+  CommentService是一个单例对象，如果按照下面这样写法，则只会在创建CommentService单例对象的时候，去创建CommentProcessor对象，然后进行注入，后续使用的都是同一个。这和将CommentProcessor设为singleton作用域没有任何区别。
+
+  ```java
+  @Service
+  public class CommentService {
+      // Spring injects this bean when creating
+      // the CommentService bean. But because
+      // CommentService is singleton, Spring
+      // will also create and inject the
+      // CommentProcessor just once.
+      @Autowired
+      private CommentProcessor processor;
+      public void sendComment(Comment c) {
+          processor.setComment(c);
+          // Uses the CommentProcessor instance to alter the Comment instance
+          processor.processComment();
+          processor.validateComment();
+      }
+  }
+  ```
+
+  正确的做法是注入context对象，然后每一次执行sendComment方法的时候，都context.getBean来获取一个新的CommentProcessor bean，这样就能保证每次执行sendComment方法的时候的bean都是独一份，线程安全的。
+
+  ```java
+  @Service
+  public class CommentService {
+      @Autowired
+      private ApplicationContext context;
+      public void sendComment(Comment c) {
+          CommentProcessor processor = context.getBean(CommentProcessor.class);
+          processor.setComment(c);
+          // Uses the CommentProcessor instance to alter the Comment instance
+          processor.processComment();
+          processor.validateComment();
+      }
+  }
+  ```
+
+
+
+### 5.1.3 总结
+
+什么时候要用Singleton什么时候用Prototype？
+
+一般来说，如果这个bean是不可变的，则用Singleton；如果这个bean是可变的，则使用prototype来保证线程安全，避免出现竞态条件。
+
+一般会把bean设计为不可变的，如果设计为可变的，需要额外考虑线程安全的问题。
