@@ -1800,3 +1800,264 @@ class上，因为注解是用于让Spring扫描到这个类，然后实例化这
 一般来说，如果这个bean是不可变的，则用Singleton；如果这个bean是可变的，则使用prototype来保证线程安全，避免出现竞态条件。
 
 一般会把bean设计为不可变的，如果设计为可变的，需要额外考虑线程安全的问题。
+
+
+
+# 6. AOP
+
+## 6.1 AOP是什么
+
+AOP面向切面编程指的是，拦截调用的方法，并且改变方法的执行。
+
+通过AOP，我们可以将一些和业务逻辑无关的代码抽取出来，将其单独配置，使其能够和业务代码逻辑解耦，提高代码的可读性和可维护性。
+
+例如，我们每一个方法中都需要写日志，但是日志和业务逻辑并没有关系，通过切面，我们可以将日志的部分单独提取出来，在其它的地方编写配置，而业务方法中，只保留业务逻辑的代码，以提高代码的可读性和可维护性。
+
+![image-20251108102730334](asset/image-20251108102730334.png)
+
+## 6.2 AOP概念
+
+* aspect: *what* code you want Spring to execute when you call specific methods. This is named an aspect.
+
+* advice: *When* the app should execute this logic of the aspect (e.g., before or after the method call, instead of the method call). This is named the advice.
+
+* pointcut: *Which* methods the framework needs to intercept and execute the aspect for them. This is named a pointcut.
+
+* join point: which defines the event that triggers the execution of an aspect. But with Spring, this event is always a method call.
+
+* target object: The bean that declares the method intercepted by an aspect is named the target object.
+
+* proxy project: if you made the object an aspect target object, Spring won’t directly give you an instance reference for the bean when you request it from the context. Instead, Spring gives you an object that calls the aspect logic instead of the actual method. We say that Spring gives you a proxy object instead of the real bean. You will now receive the proxy instead of the bean anytime you get the bean from the context, either if you directly use the getBean() method of the context or if you use DI. This approach is named weaving.
+
+* joint point和point cut的区别：
+
+  * Joinpoints 指的是所有可以进行拦截的点，而point cut是你根据业务需求具体指定的要进行拦截的点。
+
+  * 例如你写了很多方法，这里的所有方法调用都是连接点
+
+    ```java
+    public class UserService {
+        public void addUser() {}
+        public void deleteUser() {}
+        public void updateUser() {}
+    }
+    ```
+
+    如果你这样定义切点表达式，则只有addUser这一个方法调用是切点，表示只对以add开头的方法进行拦截。
+
+    ```java
+    @Pointcut("execution(* com.example.UserService.add*(..))")
+    public void userAddOperation() {}
+    ```
+
+
+
+ps：如果我们要对一个对象进行AOP编程，则说明这个对象需要用到Spring提供的功能，则这个对象要被作为bean加入到Spring容器中，Spring才能够管理这个bean，这个bean从而才能使用Spring提供的AOP功能。
+
+![image-20251108110559733](asset/image-20251108110559733.png)
+
+## 6.3 用 vs 不用AOP
+
+不用AOP，我们调用一个对象的方法，是直接调用这个方法本身。
+
+使用AOP，调用一个对象的方法，实际上Spring会调用这个目标对象的proxy对象增强的方法，这个proxy对象的增强方法中，一方面包含增强/切面逻辑，另一方面会再去调用目标对象的方法来完成具体的业务逻辑。
+
+![image-20251108110659017](asset/image-20251108110659017.png)
+
+## 6.4 AOP实践
+
+当前的项目是，这个Spring app提供一个发布评论的功能。
+
+先搭建一个项目的架子，然后在此基础上，增加AOP功能。
+
+* 项目代码
+
+  项目结构：
+
+  ![image-20251109165926997](asset/image-20251109165926997.png)
+
+  
+
+  ```xml
+  <!--pom依赖-->
+  <dependencies>
+      <dependency>
+          <groupId>org.springframework</groupId>
+          <artifactId>spring-context</artifactId>
+          <version>5.2.8.RELEASE</version>
+      </dependency>
+  </dependencies>
+  ```
+
+  ```java
+  // Comment类
+  package com.tudou.pojo;
+  
+  public class Comment {
+      private String text;
+      private String author;
+  
+      // Omitted getters and setters
+  }
+  ```
+
+  ```java
+  // Service类
+  package com.tudou.service;
+  
+  @Service
+  public class CommentService {
+      //  When declaring a logger object, you need to give it a name as a parameter.
+      //  This name then appears in the logs and makes it easy for you to
+      //  observe the log message source.
+      private Logger logger = Logger.getLogger(CommentService.class.getName());
+      public void publishComment(Comment comment) {
+          logger.info("Publishing comment:" + comment.getText());
+      }
+  }
+  ```
+
+  ```java
+  // 配置类
+  package com.tudou.config;
+  
+  @Configuration
+  @ComponentScan(basePackages = "com.tudou")
+  public class ProjectConfig {
+  }
+  ```
+
+  ```java
+  // main函数
+  public class Main {
+      public static void main(String[] args) {
+          var c = new AnnotationConfigApplicationContext(ProjectConfig.class);
+          var service = c.getBean(CommentService.class);
+          Comment comment = new Comment();
+          comment.setText("Demo comment");
+          comment.setAuthor("Natasha");
+          service.publishComment(comment);
+      }
+  }
+  
+  // 执行结果
+  11月 09, 2025 5:24:49 下午 com.tudou.service.CommentService publishComment
+  信息: Publishing comment:Demo comment
+  ```
+
+
+
+现在有一个新增的需求，需要统计所有方法的执行时长，下面介绍如何用AOP实现。
+
+增加AOP功能，有以下4步：
+
+项目结构
+
+![image-20251109165509448](asset/image-20251109165509448.png)
+
+1. 增加AOP依赖
+
+   ```xml
+   <dependency>
+       <groupId>org.springframework</groupId>
+       <artifactId>spring-aspects</artifactId>
+       <version>5.2.8.RELEASE</version>
+   </dependency>
+   ```
+
+2. 在配置类增加 @EnableAspectJAutoProxy注解来开启AOP功能
+
+   ```java
+   @Configuration
+   @ComponentScan(basePackages = "com.tudou")
+   // Enables the aspects mechanism in our Spring app
+   @EnableAspectJAutoProxy
+   public class ProjectConfig {
+   }
+   ```
+
+3. 创建一个切面类，增加@Aspect注解，会在该类中定义AOP相关配置
+
+   ```java
+   package com.tudou.aspect;
+   
+   @Aspect
+   public class LoggingAspect {
+   }
+   ```
+
+   ```java
+   package com.tudou.aspect;
+   
+   @Aspect
+   public class LoggingAspect {
+       private Logger logger = Logger.getLogger(LoggingAspect.class.getName());
+   	
+       
+       // 环绕通知 Defines which are the intercepted methods
+       @Around("execution(* com.tudou.service.*.*(..))")
+       // the ProceedingJoinPoint parameter, 
+       // which represents the intercepted method. 
+       // The main thing you do with this parameter is tell the aspect 
+       // when it should delegate further to the actual method.
+       public void log(ProceedingJoinPoint joinPoint) throws Throwable {
+           logger.info("Method will execute");
+           // 调用实际被拦截的方法
+           // proceed() method throws a Throwable. 
+           // The method proceed() is designed to 
+           // throw any exception coming from the intercepted method. 
+           joinPoint.proceed();
+           logger.info("Method executed");
+       }
+   }
+   ```
+
+4. 创建一个LoggingAspect类的Bean
+
+   ```java
+   package com.tudou.config;
+   
+   @Configuration
+   @ComponentScan(basePackages = "com.tudou")
+   // Enables the aspects mechanism in our Spring app
+   @EnableAspectJAutoProxy
+   public class ProjectConfig {
+       @Bean
+       public LoggingAspect aspect() {
+           return new LoggingAspect();
+       }
+   }
+   ```
+
+​	
+
+最终执行结果：
+
+```java
+// 增强逻辑
+11月 09, 2025 5:25:39 下午 com.tudou.aspect.LoggingAspect log
+信息: Method will execute
+// 调用目标对象方法
+11月 09, 2025 5:25:39 下午 com.tudou.service.CommentService publishComment
+信息: Publishing comment:Demo comment
+// 增强逻辑
+11月 09, 2025 5:25:39 下午 com.tudou.aspect.LoggingAspect log
+信息: Method executed
+```
+
+
+
+==注意：==
+
+* 一定要手动创建一个切面类的Bean。
+
+  因为@Aspect这个注解并不会创建对应Bean，这个注解只是用来告诉Spring，这个类中定义了AOP相关配置。
+
+* *execution(\* services.*.*(..))* 这是用于定义切点的表达式
+
+  * 含义
+
+    ![image-20251109171836822](asset/image-20251109171836822.png)
+
+  * 不需要死记硬背，如果要写的时候，直接查询文档即可http://mng.bz/4K9g
+
