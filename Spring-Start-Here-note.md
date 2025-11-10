@@ -2061,3 +2061,422 @@ ps：如果我们要对一个对象进行AOP编程，则说明这个对象需要
 
   * 不需要死记硬背，如果要写的时候，直接查询文档即可http://mng.bz/4K9g
 
+
+## 6.5 获取/修改 拦截的方法的参数和返回值
+
+**获取被拦截的方法的参数和返回值**
+
+```java
+// main方法
+public class Main {
+    private static Logger logger = Logger.getLogger(Main.class.getName());
+    public static void main(String[] args) {
+        var c = new AnnotationConfigApplicationContext(ProjectConfig.class);
+        var service = c.getBean(CommentService.class);
+        Comment comment = new Comment();
+        comment.setText("Demo comment");
+        comment.setAuthor("Natasha");
+        String value = service.publishComment(comment);
+        logger.info(value);
+    }
+}
+```
+
+```java
+// 被拦截的方法
+@Service
+public class CommentService {
+    private Logger logger = Logger.getLogger(CommentService.class.getName());
+    public String publishComment(Comment comment) {
+        logger.info("Publishing comment:" + comment.getText());
+        return "SUCCESS";
+    }
+}
+```
+
+```java
+// 切面类
+@Aspect
+public class LoggingAspect {
+    private Logger logger = Logger.getLogger(LoggingAspect.class.getName());
+
+    @Around("execution(* com.tudou.service.*.*(..))")
+    public Object log(ProceedingJoinPoint joinPoint) throws Throwable {
+        // Obtains the name and parameters of the intercepted method
+        String methodName = joinPoint.getSignature().getName();
+        Object[] args = joinPoint.getArgs();
+        logger.info("Method " + methodName + "with parameters " + Arrays.asList(args) + " will execute");
+
+        // Calls the intercepted method
+        Object returnedByMethod = joinPoint.proceed();
+        logger.info("Method executed and returned " + returnedByMethod);
+
+        // Returns the value returned by the intercepted method
+        return returnedByMethod;
+    }
+}
+```
+
+```java
+// 执行结果
+11月 10, 2025 11:10:31 上午 com.tudou.aspect.LoggingAspect log
+信息: Method publishCommentwith parameters [Comment{text='Demo comment', author='Natasha'}] will execute
+11月 10, 2025 11:10:31 上午 com.tudou.service.CommentService publishComment
+信息: Publishing comment:Demo comment
+11月 10, 2025 11:10:31 上午 com.tudou.aspect.LoggingAspect log
+信息: Method executed and returned SUCCESS
+11月 10, 2025 11:10:31 上午 com.tudou.main.Main main
+信息: SUCCESS
+```
+
+
+
+**获取被拦截的方法的参数和返回值**
+
+和上面的例子只有切面类有区别
+
+```java
+// 切面类
+@Aspect
+public class LoggingAspect {
+    private Logger logger = Logger.getLogger(LoggingAspect.class.getName());
+
+    // Defines which are the intercepted methods
+    @Around("execution(* com.tudou.service.*.*(..))")
+    public Object log(ProceedingJoinPoint joinPoint) throws Throwable {
+        // Obtains the name and parameters of the intercepted method
+        String methodName = joinPoint.getSignature().getName();
+        Object[] args = joinPoint.getArgs();
+        logger.info("Method " + methodName + "with parameters " + Arrays.asList(args) + " will execute");
+
+        // Send a different comment instance as a value to the method’s parameter.
+        Comment comment = new Comment();
+        comment.setText("Some other text!");
+        Object[] newArgs = {comment};
+
+        // Calls the intercepted method
+        Object returnedByMethod = joinPoint.proceed(newArgs);
+        logger.info("Method executed and returned " + returnedByMethod);
+
+        // Return a different value to the caller.
+        return "FAILED";
+    }
+}
+```
+
+```java
+// 执行结果
+11月 10, 2025 10:53:59 上午 com.tudou.aspect.LoggingAspect log
+信息: Method publishCommentwith parameters [Comment{text='Demo comment', author='Natasha'}] will execute
+11月 10, 2025 10:53:59 上午 com.tudou.service.CommentService publishComment
+信息: Publishing comment:Some other text!
+11月 10, 2025 10:53:59 上午 com.tudou.aspect.LoggingAspect log
+信息: Method executed and returned SUCCESS
+11月 10, 2025 10:53:59 上午 com.tudou.main.Main main
+信息: FAILED
+```
+
+## 6.6 通过注解指定需要拦截的方法
+
+1. 定义一个自定义注解
+
+   ```java
+   // Enables the annotation to be intercepted at runtime
+   @Retention(RetentionPolicy.RUNTIME)
+   // Restricts this annotation to only be used with methods
+   @Target(ElementType.METHOD)
+   public @interface ToLog {
+   }
+   ```
+
+2. 在需要拦截的方法上增加这个注解
+
+   ```java
+   package com.tudou.service;
+   
+   @Service
+   public class CommentService {
+       private Logger logger = Logger.getLogger(CommentService.class.getName());
+       public void publishComment(Comment comment) {
+           logger.info("Publishing comment:" + comment.getText());
+       }
+   	
+       // 需要拦截的方法
+       @ToLog
+       public void deleteComment(Comment comment) {
+           logger.info("Deleting comment:" + comment.getText());
+       }
+   
+       public void editComment(Comment comment) {
+           logger.info("Editing comment:" + comment.getText());
+       }
+   }
+   ```
+
+3. 定义Aspect表达式
+
+   ```java
+   package com.tudou.aspect;
+   
+   @Aspect
+   public class LoggingAspect {
+       private Logger logger = Logger.getLogger(LoggingAspect.class.getName());
+   
+       // 这里的Aspect表达式代表包含ToLog注解的方法
+       @Around("@annotation(com.tudou.annotation.ToLog))")
+       public Object log(ProceedingJoinPoint joinPoint) throws Throwable {
+           // Obtains the name and parameters of the intercepted method
+           String methodName = joinPoint.getSignature().getName();
+           Object[] args = joinPoint.getArgs();
+           logger.info("Method " + methodName + "with parameters " + Arrays.asList(args) + " will execute");
+   
+           // Calls the intercepted method
+           Object returnedByMethod = joinPoint.proceed();
+           logger.info("Method executed and returned " + returnedByMethod);
+   
+           return returnedByMethod;
+       }
+   }
+   
+   ```
+
+4. main方法
+
+   ```java
+   public class Main {
+       private static Logger logger = Logger.getLogger(Main.class.getName());
+       public static void main(String[] args) {
+           var c = new AnnotationConfigApplicationContext(ProjectConfig.class);
+           var service = c.getBean(CommentService.class);
+           Comment comment = new Comment();
+           comment.setText("Demo comment");
+           comment.setAuthor("Natasha");
+           service.publishComment(comment);
+           service.deleteComment(comment);
+           service.editComment(comment);
+       }
+   }
+   ```
+
+   ```java
+   // 执行结果
+   // publishComment方法执行
+   11月 10, 2025 12:12:15 下午 com.tudou.service.CommentService publishComment
+   信息: Publishing comment:Demo comment
+   // deleteComment方法执行 被增强
+   11月 10, 2025 12:12:15 下午 com.tudou.aspect.LoggingAspect log
+   信息: Method deleteCommentwith parameters [Comment{text='Demo comment', author='Natasha'}] will execute
+   11月 10, 2025 12:12:15 下午 com.tudou.service.CommentService deleteComment
+   信息: Deleting comment:Demo comment
+   11月 10, 2025 12:12:15 下午 com.tudou.aspect.LoggingAspect log
+   信息: Method executed and returned null
+   // editComment方法执行
+   11月 10, 2025 12:12:15 下午 com.tudou.service.CommentService editComment
+   信息: Editing comment:Demo comment
+   ```
+
+   
+
+==注意：==
+
+* `@Retention(RetentionPolicy.RUNTIME)`这是什么意思？
+
+  * @Retention是用于修饰注解的注解，也就是说，通过@Retention，我们可以对@ToLog注解进行配置。
+
+    `RetentionPolicy.RUNTIME`就是对@ToLog注解的保留策略进行配置。
+
+  * RetentionPolicy代表注解的保留策略
+
+    | RetentionPolicy 值 | 生命周期阶段                             | 能否在运行时通过反射读取？ | 常见用途                                                     |
+    | ------------------ | ---------------------------------------- | -------------------------- | ------------------------------------------------------------ |
+    | **SOURCE**         | 只存在于源码中，编译后就丢弃             | ❌ 否                       | 编译检查（例如 `@Override`）                                 |
+    | **CLASS**          | 编译进 `.class` 文件，但运行时被丢弃     | ❌ 否                       | 框架很少直接用（默认值）                                     |
+    | **RUNTIME**        | 编译进 `.class` 文件，并在运行时依然存在 | ✅ 是                       | 需要在运行时通过反射/AOP 处理的注解，如 `@Autowired`、`@Transactional`、`@RequestMapping` |
+
+    简单来说，`RetentionPolicy.RUNTIME`表示运行时注解依然保留，而其他两种保留策略运行时不会保留注解。
+
+    而AOP通过注解实现，是Spring在运行时通过反射获取方法的注解，然后对持有@ToLog注解的方法进行拦截。
+
+    只有`RetentionPolicy.RUNTIME`这种保留策略才能保证Spring运行时还能够看到方法的@ToLog注解，以对对应的方法进行增强。
+
+    总结一句话：
+
+    `@Retention(RetentionPolicy.RUNTIME)`：告诉 JVM“请在运行时也保留这个注解的信息，让反射或 AOP 能看见它”。
+
+* `@Around("@annotation(com.tudou.annotation.ToLog))")`这里的注解名称一定要写全限定名，如果写成`@Around("@annotation(ToLog))")`，Spring会报下面的异常
+
+  11月 10, 2025 12:14:17 下午 org.springframework.context.support.AbstractApplicationContext refresh
+  警告: Exception encountered during context initialization - cancelling refresh attempt: org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'projectConfig': Initialization of bean failed; nested exception is java.lang.IllegalArgumentException: **error Type referred to is not an annotation type: ToLog**
+
+## 6.7 通知注解
+
+* @Around：在目标方法执行前/后都可以进行增强
+* @Before：在目标方法执行前进行增强
+* @AfterReturning：calls the method defining the aspect logic after the method successfully returns, and provides the returned value as a parameter to the aspect method. *The aspect method isn’t called if the intercepted method throws an exception.*
+* @AfterThrowing：Calls the method defining the aspect logic if the intercepted
+  method throws an exception, and provides the exception instance as a parame-
+  ter to the aspect method.
+* @After：Calls the method defining the aspect logic only after the intercepted method execution, whether the method successfully returned or threw an exception.
+
+
+
+注意：
+
+* 只有@Around注解的增强方法拥有ProceedingJoinPoint参数，用于决定何时调用目标方法。拥有其他通知注解的方法没有该参数，因为根据它们的语义，它们无法控制目标方法什么时候被调用。
+
+
+
+示例：
+
+```java
+// @AfterReturning通知注解的使用示例
+@Aspect
+public class LoggingAspect {
+    private Logger logger = Logger.getLogger(LoggingAspect.class.getName());
+
+    // returning 属性指定log方法声明中用于接收目标方法执行结果的参数的参数名
+    @AfterReturning(value = "@annotation(com.tudou.annotation.ToLog)", returning = "returnedValue")
+    public void log(Object returnedValue) {
+        logger.info("Method executed and returned " + returnedValue);
+    }
+}
+```
+
+```java
+// 执行结果
+// publishComment方法执行
+11月 10, 2025 4:43:59 下午 com.tudou.service.CommentService publishComment
+信息: Publishing comment:Demo comment
+// deleteComment方法执行
+11月 10, 2025 4:43:59 下午 com.tudou.service.CommentService deleteComment
+信息: Deleting comment:Demo comment
+// deleteComment方法被增强
+11月 10, 2025 4:43:59 下午 com.tudou.aspect.LoggingAspect log
+信息: Method executed and returned null
+// editComment方法执行
+11月 10, 2025 4:43:59 下午 com.tudou.service.CommentService editComment
+信息: Editing comment:Demo comment
+```
+
+
+
+## 6.8 切面执行链
+
+### 6.8.1 切面执行顺序
+
+如果有多个切面，那这多个切面的执行顺序是怎样的？
+
+假设当前app需要实现两个切面：
+
+* SecurityAspect：对所有的请求先进行权限校验，当通过校验才放行执行业务逻辑
+* LoggingAspect：对所有的请求进行拦截，对请求的开始和结束都需要打日志
+
+如果我们指定先执行SecurityAspect切面，则对于那些权限校验没有通过的请求，不会再把请求委托给LoggingAspect切面，则这部分请求不会被打日志，这并不符合我们的要求。我们对LoggingAspect的要求是，对于所有请求都要进行打日志。
+
+所以，我们必须要指定先执行LoggingAspect切面，这会对所有请求都打日志，之后再将请求委托给SecurityAspect切面继续执行，如果权限校验没有通过，则不会调用业务逻辑代码。
+
+![image-20251110200403608](asset/image-20251110200403608.png)
+
+### 6.8.2 如何指定切面执行的先后顺序
+
+* 默认场景下，如果不进行显式指定，切面的执行顺序是随机的，Spring doesn’t guarantee the order in which two aspects in the same execution chain are called. 如果业务中对切面的顺序没有要求，则无需显式指定顺序
+* 如果要显式指定顺序，则可以在切面类上使用@Order注解，接受一个序号数为参数，值越小，优先级越高。
+
+示例：
+
+```java
+// LoggingAspect切面类
+package com.tudou.aspect;
+
+@Aspect
+@Order(1)  // 指定顺序
+public class LoggingAspect {
+    private Logger logger = Logger.getLogger(LoggingAspect.class.getName());
+
+    @Around(value = "@annotation(com.tudou.annotation.ToLog)")
+    public Object log(ProceedingJoinPoint joinPoint) throws Throwable {
+        logger.info("Logging Aspect: Calling the intercepted method");
+        // The proceed() method here delegates further in the aspect execution chain. \
+        // It can either call the next aspect or the intercepted method.
+        Object returnedValue = joinPoint.proceed();
+        logger.info("Logging Aspect: Method executed and returned " + returnedValue);
+        return returnedValue;
+    }
+}
+```
+
+```java
+// SecurityAspect切面类
+package com.tudou.aspect;
+
+@Aspect
+@Order(2)  // 指定顺序
+public class SecurityAspect {
+    private Logger logger = Logger.getLogger(SecurityAspect.class.getName());
+
+    @Around(value = "@annotation(com.tudou.annotation.ToLog)")
+    public Object secure(ProceedingJoinPoint joinPoint) throws Throwable {
+        logger.info("Security Aspect: Calling the intercepted method");
+        Object returnedValue = joinPoint.proceed();
+        logger.info("Security Aspect: Method executed and returned " + returnedValue);
+        return returnedValue;
+    }
+}
+
+```
+
+```java
+// 被增强的Service类
+@Service
+public class CommentService {
+    private Logger logger = Logger.getLogger(CommentService.class.getName());
+    @ToLog
+    public String publishComment(Comment comment) {
+        logger.info("Publishing comment:" + comment.getText());
+        return "SUCCESS";
+    }
+}
+```
+
+```java
+// main方法
+public class Main {
+    private static Logger logger = Logger.getLogger(Main.class.getName());
+    public static void main(String[] args) {
+        var c = new AnnotationConfigApplicationContext(ProjectConfig.class);
+        var service = c.getBean(CommentService.class);
+        Comment comment = new Comment();
+        comment.setText("Demo comment");
+        comment.setAuthor("Natasha");
+        service.publishComment(comment);
+    }
+}
+```
+
+```java
+// LoggingAspect切面逻辑优先执行
+11月 10, 2025 8:12:52 下午 com.tudou.aspect.LoggingAspect log
+信息: Logging Aspect: Calling the intercepted method
+// SecurityAspect切面逻辑第二执行
+11月 10, 2025 8:12:52 下午 com.tudou.aspect.SecurityAspect secure
+信息: Security Aspect: Calling the intercepted method
+// 调用目标方法
+11月 10, 2025 8:12:52 下午 com.tudou.service.CommentService publishComment
+信息: Publishing comment:Demo comment
+// 目标方法结果返回给SecurityAspect
+11月 10, 2025 8:12:52 下午 com.tudou.aspect.SecurityAspect secure
+信息: Security Aspect: Method executed and returned SUCCESS
+// SecurityAspect结果返回给LoggingAspect
+11月 10, 2025 8:12:52 下午 com.tudou.aspect.LoggingAspect log
+信息: Logging Aspect: Method executed and returned SUCCESS
+```
+
+![image-20251110201229238](asset/image-20251110201229238.png)
+
+
+
+==注意：==
+
+* 如果使用`@Around`环绕通知，方法可以接受一个`ProceedingJoinPoint`类型的参数（假设参数名为`joinPoint`），这里`joinPoint.proceed();`并不完全代表调用目标方法，而是代表调用执行链的下一个方法，可以是下一个切面，可以是目标方法。
+
+  假设有两个切面`LoggingAspect`（order=1）、`SecurityAspect`（order=2），且都是用环绕通知。我们首先调用`LoggingAspect`，第二调用`SecurityAspect`切面，则在`LoggingAspect`切面的增强方法中调用`joinPoint.proceed();`是表示调用`SecurityAspect`切面的增强方法。在`SecurityAspect`切面中的增强方法中调用`joinPoint.proceed();`是表示调用目标方法。简而言之，就是表示调用执行链的下一个方法。
