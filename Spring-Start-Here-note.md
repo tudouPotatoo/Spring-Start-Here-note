@@ -2480,3 +2480,319 @@ public class Main {
 * 如果使用`@Around`环绕通知，方法可以接受一个`ProceedingJoinPoint`类型的参数（假设参数名为`joinPoint`），这里`joinPoint.proceed();`并不完全代表调用目标方法，而是代表调用执行链的下一个方法，可以是下一个切面，可以是目标方法。
 
   假设有两个切面`LoggingAspect`（order=1）、`SecurityAspect`（order=2），且都是用环绕通知。我们首先调用`LoggingAspect`，第二调用`SecurityAspect`切面，则在`LoggingAspect`切面的增强方法中调用`joinPoint.proceed();`是表示调用`SecurityAspect`切面的增强方法。在`SecurityAspect`切面中的增强方法中调用`joinPoint.proceed();`是表示调用目标方法。简而言之，就是表示调用执行链的下一个方法。
+
+# 7. SpringBoot & Spring MVC
+
+## 7.1 web app是什么
+
+**是什么：**
+
+通过浏览器访问的应用就是web app。
+
+以前，人们使用各种应用都需要下载对应的软件，现在，通过浏览器就可以看youtube、听音乐、玩游戏，不需要再下载软件，非常方便，这些通过浏览器就可以访问的应用就是web app。
+
+![image-20251123171602698](asset/image-20251123171602698.png)
+
+
+
+**big picture of a web app:**
+
+![image-20251123173712578](asset/image-20251123173712578.png)
+
+注意：the backend serves multiple clients concurrently，因此后端需要考虑竞态条件问题。
+
+![image-20251123173846576](asset/image-20251123173846576.png)
+
+## 7.2 前后端不分离 vs 前后端分离
+
+实现一个web app有多种方式：
+
+* 前后端不分离：浏览器获取到后端传来的数据直接展示给用户。
+
+  后端会返回浏览器能够展示的数据类型，例如HTML、CSS、JS...
+
+  ![image-20251123174734793](asset/image-20251123174734793.png)
+
+* 前后端分离：后端只提供要展示的raw data，前端会对raw data进行处理、渲染，浏览器会将前端处理后的数据展示给用户。
+
+  ![image-20251123175110370](asset/image-20251123175110370.png)
+
+## 7.3 Servlet
+
+**servlet container是什么：**
+
+一句话解释：servlet container(e.g., Tomcat): software with the capability to translate HTTP requests and responses to the Java app. 
+
+在web-app中，有client和server两个角色，client和server通过HTTP协议进行通信。
+
+那我们在开发web-app应用的时候，需要考虑如何将HTTP协议请求、响应转化为Java应用能够理解的对象。
+
+servlet container可以理解为一个翻译器，用以将HTTP messages翻译为Java应用能够理解的对象。这样的话，我们的web-app本身不用再关心如何进行HTTP messages和Java对象的转换、翻译，而只需要关注我们业务逻辑本身。
+
+Tomcat是One of the most appreciated servlet container，除了Tomcat之外，还有其他替代品例如Jetty、JBoss、Payara等。
+
+![image-20251124204610715](asset/image-20251124204610715.png)
+
+自己的话：tomcat是servlet container的一种，它的作用就是将http请求翻译成Java对象，让web app开发者不用关注如何处理http格式的请求。将响应内容翻译成http响应，开发者也无需关注如何将请求封装成http格式的响应。简单来说，他就是做了一层抽象，让web app开发者无需关注网络传输协议是什么，而只需要关注实现自己的业务逻辑，其中具体的转化，交给tomcat来实现。除此之外，servlet container还能够管理servlet，一个servlet container中包含多个servlet，servlet container管理这些servlet，并在请求到达的时候，确定调用哪一个servlet的方法。
+
+**servlet是什么：**
+
+servlet是一个Java对象，能够直接和servlet container交互。当servlet container接收到一个HTTP请求，它会调用某一个servlet对象的方法，并将请求作为方法的参数request传入。该方法也有一个响应对象参数，开发者通过这个response对象可以设置返回给client的内容。
+
+浏览器 → HTTP 请求 → **Tomcat（Servlet 容器）**
+ Tomcat: 解析请求 → 调用 Servlet 方法 → 传入 req & resp
+ Servlet：读取 req → 处理逻辑 → 写入 resp
+ Tomcat：发送 HTTP 响应 → 浏览器
+
+
+
+**当servlet container接受到一个请求，它如何决定调用哪一个servlet对象的方法？**
+
+当我们创建一个servlet的时候，需要将这个servlet和一个路径绑定在一起。当servlet接受到一个请求的时候，会根据请求的路径，找到对应的servlet，调用对应的servlet对象的方法。The servlet contained the logic associated with the user’s request and the ability to prepare a response. servlet is the entry point to your app’s logic. 
+
+![image-20251124211210599](asset/image-20251124211210599.png)
+
+## 7.4 SpringBoot
+
+Spring Boot 是 Spring 的快速开发脚手架，目的是让你无需繁琐配置就能快速构建 Spring 应用。
+
+SpringBoot提供了很多功能，使得我们创建web app的过程能够大大简化，让开发者能够做到最大程度只需关注业务逻辑开发。
+
+Spring Boot提供的主要功能：
+
+* Simplified project creation—You can use a project initialization service to get an empty but configured skeleton app.
+* Dependency starters—Spring Boot groups certain dependencies used for a specific purpose with dependency starters. You don’t need to figure out all the must-have dependencies you need to add to your project for one particular purpose nor which versions you should use for compatibility.
+* Autoconfiguration based on dependencies—Based on the dependencies you added to your project, Spring Boot defines some default configurations. Instead of writing all the configurations yourself, you only need to change the ones provided by Spring Boot that don’t match what you need. Changing the configs likely requires less code (if any).
+
+### 7.4.1 如何创建一个SpringBoot项目
+
+有两种方式：
+
+1. 有一些ide中，集成了SpringBoot project initializer，通过这个initializer就可以直接创建SpringBoot项目。
+
+   ![image-20251125102707825](asset/image-20251125102707825.png)
+
+2. 如果ide中没有集成SpringBoot project initializer，可以通过`http://start.spring.io`网站来创建SpringBoot初始项目。
+
+   ![image-20251125103110706](asset/image-20251125103110706.png)
+
+   点击generate之后，会得到Spring Boot project的压缩文件，解压之后就可以将其导入ide中。
+
+### 7.4.2 新SpringBoot项目的构成
+
+![image-20251125104908841](asset/image-20251125104908841.png)
+
+* The Spring app main class
+
+  SpringBoot项目的main class是拥有@SpringBootApplication注解的class
+
+  ```java
+  @SpringBootApplication  // This annotation defines the Main class of a Spring Boot app.
+  public class Main {
+  
+      public static void main(String[] args) {
+          SpringApplication.run(Main.class, args);
+      }
+  
+  }
+  ```
+
+* The Spring Boot POM.xml
+
+  下面的POM文件是新建的SpringBoot项目默认的pom文件，可以看到SpringBoot已经根据我们在Spring initializer勾选的信息帮我们做了很多配置工作，让开发者可以专注于业务逻辑开发。
+
+  * 通过BOM (Bill Of Materials)，SpringBoot提供的版本管理清单。即SpringBoot会提供所有依赖的版本，开发者无需再手动指定版本号，以保证依赖之间版本的可兼容性。【书中的图是pom parent，而新版本的Spring中已经使用BOM替代原方案，因此这里的介绍是基于BOM】
+  * 插件
+  * provided dependency.这是因为在创建SpringBoot项目的时候，选中了Spring-web依赖，则SpringBoot会自动帮你将web应用需要使用到的依赖导入到SpringBoot中。
+
+  ```xml
+  <?xml version="1.0" encoding="UTF-8"?>
+  <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+      <!--基本项目信息-->
+      <modelVersion>4.0.0</modelVersion>
+      <groupId>com.tudou</groupId>  <!--公司/组织的反向域名-->
+      <artifactId>sq-ch7-ex1</artifactId>  <!--项目名称-->
+      <version>0.0.1-SNAPSHOT</version>  <!--版本号-->
+      <name>sq-ch7-ex1</name>
+      <description>sq-ch7-ex1</description>
+      <!--项目配置 & 全局变量-->
+      <properties>
+          <java.version>11</java.version>
+          <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+          <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+          <spring-boot.version>2.6.13</spring-boot.version>
+      </properties>
+      <!--项目真正用到的依赖-->
+      <dependencies>
+          <dependency>
+              <groupId>org.springframework.boot</groupId>
+              <artifactId>spring-boot-starter-web</artifactId>
+          </dependency>
+  
+          <dependency>
+              <groupId>org.springframework.boot</groupId>
+              <artifactId>spring-boot-starter-test</artifactId>
+              <scope>test</scope> <!--表示仅用于测试，不会打包进入最终的jar-->
+          </dependency>
+      </dependencies>
+      <!--依赖版本统一管理-->
+      <!--dependencyManagement不会引入任何依赖，只负责告诉Maven:如果你的依赖列表有某个库，你又没写版本号，就按照我提供的这个版本来。-->
+      <dependencyManagement>
+          <dependencies>
+              <!--BOM-->
+              <!--org.springframework.boot:spring-boot-dependencies内部为SpringBoot生态中的所有依赖统一指定了版本号。则开发者无需自己指定版本号，保证所有依赖之间的版本能够兼容。-->
+              <dependency>
+                  <groupId>org.springframework.boot</groupId>
+                  <artifactId>spring-boot-dependencies</artifactId>
+                  <version>${spring-boot.version}</version>
+                  <type>pom</type>
+                  <scope>import</scope>
+              </dependency>
+          </dependencies>
+      </dependencyManagement>
+      <!--插件-->
+      <build>
+          <plugins>
+              <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-compiler-plugin</artifactId>  <!--用于编译Java-->
+                  <version>3.8.1</version>
+                  <configuration>
+                      <source>11</source>
+                      <target>11</target>
+                      <encoding>UTF-8</encoding>
+                  </configuration>
+              </plugin>
+              <plugin>
+                  <groupId>org.springframework.boot</groupId>
+                  <artifactId>spring-boot-maven-plugin</artifactId>  <!--用于将SpringBoot项目打包成可执行jar-->
+                  <version>${spring-boot.version}</version>
+                  <configuration>
+                      <mainClass>com.tudou.SqCh7Ex1Application</mainClass>
+                      <skip>true</skip>
+                  </configuration>
+                  <executions>
+                      <execution>
+                          <id>repackage</id>
+                          <goals>
+                              <goal>repackage</goal>
+                          </goals>
+                      </execution>
+                  </executions>
+              </plugin>
+          </plugins>
+      </build>
+  
+  </project>
+  ```
+
+* The properties file: application.properties文件在resources目录下，该文件为配置文件。
+
+### 7.4.3 dependency starter
+
+* dependency starter是一个依赖，这个依赖中包含了你要实现某个目的所涉及的一组依赖。例如如果你的app中需要实现web功能，以前，你需要自己手动添加web功能所涉及的所有依赖，并且保证这些所有依赖版本的兼容性。如果我们导入spring-boot-starter-web依赖，这个依赖内部包含了所有要实现web功能所涉及的依赖，并且保证了这些所有依赖的版本的可兼容性。大大减少开发者的工作量。
+
+  ![image-20251125113933247](asset/image-20251125113933247.png)
+
+* starter通常被命名为spring-boot-starter-xxx，例如spring-boot-starter-web
+
+### 7.4.4 convention-over-configuration principle
+
+一些约定俗成的配置，会被SpringBoot设为默认配置，开发者无需再手动配置。只有当自定义的和默认配置不同的，才需要显式配置。
+
+
+
+例如，如果我们增加了`spring-boot-starter-web`依赖，启动项目，可以看到这一行在console中。
+
+我们没有进行任何配置，就启动了tomcat容器，并且是在8080端口启动。
+
+![image-20251125115741134](asset/image-20251125115741134.png)
+
+这是因为，这是web开发中最常用的配置，SpringBoot会帮我们按照最常用的配置设置默认配置。这样，我们只需要针对那些需要个性化配置的配置进行配置，其他的使用默认配置即可。这样大大减少了我们需要编写的配置代码。
+
+## 7.5 SpringMVC
+
+### 7.5.1 SpringMVC开发示例
+
+1. 在resources/static增加一个home.html页面【 This folder is the default place where the Spring Boot app expects to find the pages to render.】
+
+   ```html
+   <!DOCTYPE html>
+   <html lang="en">
+   <head>
+       <meta charset="UTF-8">
+       <title>Home Page</title>
+   </head>
+   <body>
+   <h1>Welcome!</h1>
+   </body>
+   </html>
+   ```
+
+   
+
+2. 编写一个Controller【The controller is a component of the web app that contains methods (often named actions) executed for a specific HTTP request. In the end, the controller’s action returns a reference to the web page the app returns in response. 】
+
+   * 如果希望用户访问/home路径的时候，执行某个方法，则需要在方法上增加@RequestMapping("/home")注解
+   * 方法需要返回一个字符串，该字符串对应你希望用户访问的页面的名称
+
+   ```java
+   @Controller
+   public class MainController {
+       // We use the @RequestMapping annotation to
+       // associate the action with an HTTP request path.
+       @RequestMapping("/home")
+       public String home() {
+           // We return the HTML document name that contains
+           // the details we want the browser to display.
+           return "home.html";
+       }
+   }
+   ```
+
+3. 结果验证
+
+   ![image-20251125121457352](asset/image-20251125121457352.png)
+
+### 7.5.2 SpringMVC architecture
+
+
+
+![image-20251125163848128](asset/image-20251125163848128.png)
+
+
+
+==注意：==
+
+* 在前面介绍servlet的时候，是这样说的【当我们创建一个servlet的时候，需要将这个servlet和一个路径绑定在一起。当servlet接受到一个请求的时候，会根据请求的路径，找到对应的servlet，调用对应的servlet对象的方法。】![image-20251124211210599](asset/image-20251124211210599.png)
+
+  为什么在SpringMVC中，只有一个servlet（Dispatcher Servlet）来处理所有请求，然后再分发给对应的Controller呢？
+
+  答：在原始的Java web模式下，确实每一个路径和一个Servlet绑定。请求到达web server（tomcat）之后，tomcat会根据URL找到对应的servlet，并调用对应的方法。
+
+  在SpringMVC模式中，只有一个servlet，就是Dispatcher Servlet，来处理所有请求。实际上，他是拦截一个大范围的URL，在SpringBoot自动配置中，默认为`<url-pattern>/</url-pattern>`，表示默认匹配所有路径。
+
+  则访问所有路径的请求都会被Dispatcher Servlet拦截，然后Dispatcher Servlet会根据根据后续路径（e.g. /home）找到匹配的Controller，来调用对应的Controller方法。
+
+  这里的Dispatcher Servlet就是一个前端控制器。
+
+  它的好处在于：
+
+  * 实现统一入口
+  * 支持拦截器、过滤器、AOP
+  * 支持统一异常管理
+  * ...
+
+  自己的理解：
+
+  基于Java web的时候，相当于每一个路径的请求都有一个处理员。（每个 URL 对应一个处理员（Servlet）。 请求来 → Tomcat 根据路径找到对应的 Servlet → 调用它处理。）
+
+  而SpringMVC的场景下，所有的请求都被一个前置处理员处理，再由前置处理员根据注册表来分发给后续的哪一个处理员处理，这里的注册表就是记录路径和对应处理员的关系（例如/user交给处理员Bob处理，/home交给处理员Alice处理）。这样的好处在于，有一个前置处理员，我们可以对所有的请求执行统一的入口处理，可以实现拦截器、AOP、统一异常管理、同一JSON转换等等。
+
+* 可以看到，整个SpringMVC流程图，只有Controller（图中颜色加深部分）是需要开发者自己写的，其他都是Spring底层已经实现好的。
+* Spring & SpringMVC & SpringBoot的关系是什么
+  * Spring是一个提供IOC、AOP能力的框架
+  * SpringMVC是基于Spring实现的Web应用框架，即SpringMVC是专门用来做Web应用的
+  * SpringBoot是对Spring/SpringMVC的封装，使它们能够更容易使用，目的是提升开发体验
+
