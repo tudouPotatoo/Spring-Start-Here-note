@@ -1,4 +1,4 @@
-# 1. Spring Framework
+1. Spring Framework
 
 ## 1.1 为什么需要框架
 
@@ -2795,4 +2795,219 @@ Spring Boot提供的主要功能：
   * Spring是一个提供IOC、AOP能力的框架
   * SpringMVC是基于Spring实现的Web应用框架，即SpringMVC是专门用来做Web应用的
   * SpringBoot是对Spring/SpringMVC的封装，使它们能够更容易使用，目的是提升开发体验
+
+# 8. Implementing web apps with Spring Boot and Spring MVC
+
+## 8.1 如何实现动态页面
+
+在ch7中，我们学会了如何创建一个静态页面：1. 在resources/static目录下增加一个静态html页面 2. 新增一个Controller，在Controller中增添一个方法，用@RequestMapping注解标识方法和路径的映射关系，在方法返回html页面的名称例如home.html。
+
+
+
+SpringMVC的底层执行逻辑如图：
+
+1. The client sends an HTTP request to the web server.
+2. The dispatcher servlet uses the handler mapping to find out what controller action to call.
+3. The dispatcher servlet calls the controller’s action.
+4. After executing the action associated with the HTTP request, the controller returns the view name the dispatcher servlet needs to render into the HTTP response.
+5. The response is sent back to the client.
+
+![image-20251126112919605](asset/image-20251126112919605.png)
+
+上面介绍的是如何实现静态页面，那如果我要实现动态页面呢？
+
+例如manning.com/cart这个页面，用于显式用户的购物车。那这个页面显式的内容必须要根据每个用户的购物车展示不同的内容，那如何实现呢？
+
+![image-20251126113219651](asset/image-20251126113219651.png)
+
+下面介绍如何用Thymeleaf模板引擎实现：
+
+*模板引擎是什么： The template engine is a dependency that allows us to easily send data from the controller to the view and display this data in a specific way. Thymeleaf只是其中一种，比较简单易学的一种。*
+
+1. 增加Thymeleaf依赖
+
+   ```xml
+   <!--The dependency starter that needs to be added to use Thymeleaf as a template engine-->
+   <dependency>
+       <groupId>org.springframework.boot</groupId>
+       <artifactId>spring-boot-starter-thymeleaf</artifactId>
+   </dependency>
+   ```
+
+2. 在Controller方法中，增加Model入参。
+
+   Model用于存储要发送给view的数据。通过key-value方式存储。
+
+   通过Model.addAttribute()方法能够往model中添加数据。
+
+   ```java
+   @Controller
+   public class MainController {
+       @RequestMapping("/home")
+       // The action method defines a parameter of type Model that
+       // stores the data the controller sends to the view.
+       public String home(Model page) {
+           // We add the data we want the controller to send to the view.
+           page.addAttribute("username", "Katy");
+           page.addAttribute("color", "red");
+   
+           // The controller’s action returns the view to be rendered into the HTTP response
+           return "home.html";
+       }
+   }
+   ```
+
+3. 往`resources/templates`文件夹中增加html页面
+
+   ```html
+   <!DOCTYPE html>
+   <html lang="en" xmlns:th="http://www.thymeleaf.org">
+   <head>
+       <meta charset="UTF-8">
+       <title>Home Page</title>
+   </head>
+   <body>
+   <h1>Welcome
+       <span th:style="'color:' + ${color}"
+             th:text="${username}"></span>!</h1>
+   </body>
+   </html>
+   ```
+
+   * 在ch7中，我们是在`resources/static`目录下增加html页面，我们增加的是静态页面。
+
+     这里我们需要模板引擎帮我们渲染动态页面，因此要把html页面加入到`resources/templates`目录下。
+
+   * `xmlns:th="http://www.thymeleaf.org"` This definition is equivalent to an import in Java. It allows us further to use the prefix “th” to refer to specific features provided by Thymeleaf in the view.
+
+   * 通过`${attribute_key}`可以获取Controller往Model中添加的key-value的v值。例如`${username}`获取到的就是`Katy`
+
+4. 执行结果
+
+   ![image-20251126120345561](asset/image-20251126120345561.png)
+
+   
+
+==注意：==
+
+* Thymeleaf和react和vue的区别？
+
+  答：thymeleaf用于前后端不分离的场景，由后端使用模板引擎渲染好html页面返回给浏览器展示。react和vue时用于前后端分离的场景，后端只返回raw data（例如json格式），由react和vue这种前端应用单独负责渲染到html页面。
+
+* 如果用户访问的路径没有对应的Controller Action（Controller中路径匹配的方法），则SpringBoot会返回一个默认的404页面。
+
+  ![image-20251126115607617](asset/image-20251126115607617.png)
+
+## 8.2 client如何通过HTTP发数据给server
+
+我们在8.1介绍实现动态页面，其实数据完全是固定写好在server端的。
+
+```java
+page.addAttribute("username", "Katy");
+page.addAttribute("color", "red");
+```
+
+如果我们想要从client通过HTTP协议发数据给server应该怎么做？
+
+* HTTP request parameter
+
+  示例：`http://example.com/products?brand=honda`
+
+* path variable
+
+  示例：`http://localhost:8080/home/blue`
+
+* HTTP request body
+
+  *will discuss in chapter 10*
+
+* HTTP request header
+
+### 8.2.1 HTTP request parameter
+
+**是什么：**
+
+示例：
+
+`http://example.com/products?brand=honda`
+
+`http://example.com/products?brand=honda&price=7000`
+
+**代码：**
+
+```java
+@Controller
+public class MainController {
+    @RequestMapping("/home")
+    // The action method defines a parameter of type Model that
+    // stores the data the controller sends to the view.
+    public String home(@RequestParam(required = false) String name,
+                       @RequestParam(required = false) String color,
+                       Model page) {
+        // We add the data we want the controller to send to the view.
+        page.addAttribute("username", name);
+        page.addAttribute("color", color);
+
+        // The controller’s action returns the view to be rendered into the HTTP response
+        return "home.html";
+    }
+}
+```
+
+* @RequestParam注解告诉Spring要从request parameter获取值的字段名。这里的参数名要和请求路径的key名完全一致，例如`http://localhost:8080/home?color=blue&name=Jane`
+
+* A request parameter is mandatory by default. If the client doesn’t provide a value for it, the server sends back a response with the status HTTP “400 Bad Request.” If you wish the value to be optional, you need to explicitly specify this on the annotation using the optional attribute: @RequestParam(optional=true).
+
+* 执行效果：
+
+  ![image-20251126164345928](asset/image-20251126164345928.png)
+
+* 下图展示了client发送的数据，controller如何获取到，然后再交给View resolver，渲染到html页面中。
+
+  ![image-20251126162911082](asset/image-20251126162911082.png)
+
+
+
+### 8.2.2 path variables
+
+**是什么：**
+
+Using request parameters:
+`http://localhost:8080/home?color=blue`
+Using path variables:
+`http://localhost:8080/home/blue`
+
+简单来说，就是不以key-value的方式来写参数，而是直接在路径的一部分写入参数。 On the server side, you extract that value from the path from the specific position.
+
+![image-20251126163753937](asset/image-20251126163753937.png)
+
+**代码：**
+
+```java
+@Controller
+public class MainController {
+    // To define a path variable, you assign it a name 
+    // and put it in the path between curly braces.
+    @RequestMapping("/home/{color}")
+    // You mark the parameter where you
+	// want to get the path variable value
+	// with the @PathVariable annotation.
+	// The name of the parameter must be
+	// the same as the name of the variable
+	// in the path.
+    public String home(@PathVariable String color, Model page) {
+        
+        page.addAttribute("username", "Katy");
+        page.addAttribute("color", color);
+
+        return "home.html";
+    }
+}
+```
+
+* 要使用path variable，在RequestMapping匹配的路径用花括号阔起路径变量的位置。用@@PathVariable注解标注接收路径变量的变量。两个变量名必须完全一致。
+
+* 执行效果：
+
+  ![image-20251126164415484](asset/image-20251126164415484.png)
 
