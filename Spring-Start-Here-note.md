@@ -3005,9 +3005,225 @@ public class MainController {
 }
 ```
 
-* 要使用path variable，在RequestMapping匹配的路径用花括号阔起路径变量的位置。用@@PathVariable注解标注接收路径变量的变量。两个变量名必须完全一致。
+* 要使用path variable，在RequestMapping匹配的路径用花括号阔起路径变量的位置。用@PathVariable注解标注接收路径变量的变量。两个变量名必须完全一致。
 
 * 执行效果：
 
   ![image-20251126164415484](asset/image-20251126164415484.png)
 
+## 8.3 如何实现GET、POST请求
+
+假设现在有一个这样的场景，思考如何实现？
+
+产品product有两个属性：1. 产品名称 2. 产品价格。
+
+* 用户每次可以新增一个产品（POST）
+* 用户可以查看完整的产品列表信息（GET）
+
+
+
+实现思路：
+
+1. 新创建一个SpringBoot项目
+2. 增加web依赖；增加Thymeleaf依赖；
+3. 新增一个Model类Product
+4. 新增一个Service类ProductService，专门处理Product相关的业务逻辑
+5. 新增一个Controller类ProductController，专门处理Product相关的请求
+6. 在static/templates目录下新增product.html页面，用户在该页面能够1.新增产品信息 2.查看所有产品信息
+
+代码实现：
+
+1. 新创建一个SpringBoot项目
+
+   略
+
+2. 增加web依赖；增加Thymeleaf依赖；
+
+   ```xml
+   <dependency>
+       <groupId>org.springframework.boot</groupId>
+       <artifactId>spring-boot-starter-thymeleaf</artifactId>
+   </dependency>
+   <dependency>
+       <groupId>org.springframework.boot</groupId>
+       <artifactId>spring-boot-starter-web</artifactId>
+   </dependency>
+   ```
+
+3. 新增一个Model类Product
+
+   ```java
+   public class Product {
+       private String name;
+       private double price;
+   
+       // omitted getter setter code
+   }
+   ```
+
+4. 新增一个Service类ProductService，专门处理Product相关的业务逻辑
+
+   ```java
+   @Service
+   public class ProductService {
+       public List<Product> products = new ArrayList<>();
+   
+       public List<Product> getAllProducts() {
+           return products;
+       }
+   
+       public void addProduct(Product product) {
+           products.add(product);
+       }
+   }
+   ```
+
+   
+
+5. 新增一个Controller类ProductController，专门处理Product相关的请求
+
+   ```java
+   @Controller
+   public class ProductController {
+       private ProductService productService;
+   
+       ProductController(ProductService productService) {
+           this.productService = productService;
+       }
+   
+       @RequestMapping("/products")
+       public String getAllProducts(Model model) {
+           // 获取所有product
+           List<Product> products = productService.getAllProducts();
+           // 展示
+           model.addAttribute("products", products);
+           return "product.html";
+       }
+   
+       @RequestMapping(value = "/products", method = RequestMethod.POST)
+       public String addProduct(@RequestParam String name,
+                                @RequestParam double price,
+                                Model model) {
+           // 创建product对象
+           Product product = new Product();
+           product.setName(name);
+           product.setPrice(price);
+   
+           // 增加到product列表
+           productService.addProduct(product);
+   
+           // 展示最新product列表
+           List<Product> products = productService.getAllProducts();
+           model.addAttribute("products", products);
+           return "product.html";
+       }
+   }
+   ```
+
+   
+
+6. 在static/templates目录下新增products.html页面，用户在该页面能够1.新增产品信息 2.查看所有产品信息
+
+   ```html
+   <!DOCTYPE html>
+   <html lang="en" xmlns:th="http://www.thymeleaf.org">
+   <head>
+       <meta charset="UTF-8">
+       <title>Home Page</title>
+   </head>
+   <body>
+   <h1>Products</h1>
+   <h2>View products</h2>
+   <table>
+       <tr>
+           <th>PRODUCT NAME</th>
+           <th>PRODUCT PRICE</th>
+       </tr>
+       <tr th:each="p: ${products}" >
+           <td th:text="${p.name}"></td>
+           <td th:text="${p.price}"></td>
+       </tr>
+   </table>
+   
+   <h2>Add a product</h2>
+   <form action="/products" method="post">
+       Name: <input
+           type="text"
+           name="name"><br />
+       Price: <input
+           type="number"
+           step="any"
+           name="price"><br />
+       <button type="submit">Add product</button>
+   </form>
+   </body>
+   </html>
+   ```
+
+7. 效果展示
+
+   ![image-20251127120926675](asset/image-20251127120926675.png)
+
+
+
+注意：
+
+* 当访问/products的时候，获取product列表到展示的SpringMVC底层执行流程
+
+  1. The client sends an HTTP request for the /products path.
+  2. The dispatcher servlet uses the handler mapping to find the controller’s action to call for the /products path.
+  3. The dispatcher servlet calls the controller’s action.
+  4. The controller requests the product list from the service and sends it to be rendered with the view.
+  5. The view is rendered into an HTTP response.
+  6. The HTTP response is sent back to the client.
+
+  ![image-20251127121400735](asset/image-20251127121400735.png)
+
+* 如果@RequestMapping("/products")注解不显式指定Method，则默认是使用GET
+
+* @GetMapping("/products")等于@RequestMapping(value = "/products", method = RequestMethod.GET)
+
+  @PostMapping("/products")等于@RequestMapping(value = "/products", method = RequestMethod.POST)
+
+* 下面两种写法完全一样
+
+  ```java
+  @RequestMapping(value = "/products", method = RequestMethod.POST)
+  public String addProduct(@RequestParam String name,
+                           @RequestParam double price,
+                           Model model) {
+      // 创建product对象
+      Product product = new Product();
+      product.setName(name);
+      product.setPrice(price);
+  
+      // 增加到product列表
+      productService.addProduct(product);
+  
+      // 展示最新product列表
+      List<Product> products = productService.getAllProducts();
+      model.addAttribute("products", products);
+      return "product.html";
+  }
+  ```
+
+  ```java
+  @RequestMapping(value = "/products", method = RequestMethod.POST)
+  public String addProduct(Product product, Model model) {
+      // 增加到product列表
+      productService.addProduct(product);
+  
+      // 展示最新product列表
+      List<Product> products = productService.getAllProducts();
+      model.addAttribute("products", products);
+      return "product.html";
+  }
+  ```
+
+  因为由于Product类的属性名和（在product.html指定的）request parameter的名称完全一致，都是name和price，Spring能够识别它们相互匹配，并且自动帮你创建Product对象。这是Spring帮助开发者减少代码量的一种机制。
+
+  注意这里Product类一定要有构造函数，以便于Spring能够调用构造函数来创建Product实例对象。
+
+  *be aware that Spring tends to have plenty of syntaxes to hide as much code as possible. Whenever you find a syntax you don’t clearly understand in an example or article, try finding the framework specification details.*
+
+​		
