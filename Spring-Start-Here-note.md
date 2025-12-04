@@ -3226,4 +3226,448 @@ public class MainController {
 
   *be aware that Spring tends to have plenty of syntaxes to hide as much code as possible. Whenever you find a syntax you don’t clearly understand in an example or article, try finding the framework specification details.*
 
-​		
+# 9. Using the Spring web scopes
+
+本章学习三个注解的使用`@RequestScope`、`@SessionScope`、`@ApplicationScope`
+
+web scopes包含三个：
+
+* Request scope: 对于每一个HTTP请求，都会创建一个新的bean
+
+  ![image-20251203160309899](asset/image-20251203160309899.png)
+
+  Key aspects of request-scoped beans:
+
+  ![image-20251203160858810](asset/image-20251203160858810.png)
+
+* Session scope: 开启一个会话的时候，会创建一个bean。后续同一个会话，始终用同一个bean。
+
+  A session-scoped bean allows us to store data shared by multiple requests of the same client.
+
+  ![image-20251204150333409](asset/image-20251204150333409.png)
+
+  Key aspects of session-scoped beans:
+
+  ![image-20251204152016928](asset/image-20251204152016928.png)
+
+* Application scope: 所有请求共用同一个bean
+
+  ![image-20251204171207821](asset/image-20251204171207821.png)
+
+
+
+
+
+通过一个示例来介绍这三个scope的应用。
+
+需求：实现一个登陆功能。
+
+1. 用户通过输入username和password来实现登陆 - request scope
+2. 如果登陆成功，要保证会话范围内，能够持续显示用户username - session scope
+3. 需要记录app范围总的登陆次数 - application scope
+
+
+
+**实现需求1：用户通过输入username和password来实现登陆 - request scope**
+
+* LoginController
+
+  * `/` - login() - GET: 访问`login.html`
+
+  * `/` - login(String username, String password) - POST: 登陆
+
+    通过调用Request Scope的LoginProcessor来实现登陆逻辑
+
+    * 登陆成功 - 跳转`login.html`，显示`You are now logged in.`
+    * 登陆失败 - 跳转`login.html`，显示`Login failed!`
+
+  ```java
+  @Controller
+  public class LoginController {
+      private final LoginProcessor loginProcessor;
+  
+      public LoginController(LoginProcessor loginProcessor) {
+          this.loginProcessor = loginProcessor;
+      }
+  
+      @GetMapping("/")
+      public String login() {
+          return "login.html";
+      }
+  
+      @PostMapping("/")
+      public String login(@RequestParam String username, @RequestParam String password, Model model) {
+          loginProcessor.setUsername(username);
+          loginProcessor.setPassword(password);
+          boolean loggedIn = loginProcessor.login();
+          if (loggedIn) {
+              model.addAttribute("message", "You are now logged in.");
+          } else {
+              model.addAttribute("message", "Login failed!");
+          }
+          return "login.html";
+      }
+  }
+  ```
+
+
+
+* LoginProcessor
+
+  ```java
+  @Component
+  @RequestScope
+  // 每个HTTP请求都会创建一个新的LoginProcessor对象
+  // why?因为 LoginProcessor 保存了 username/password，所以如果是单例，会产生线程安全问题。
+  public class LoginProcessor {
+      private String username;
+      private String password;
+  
+      public boolean login() {
+          boolean loggedIn = false;
+          if ("alice".equals(this.username) && "password".equals(this.password)) {
+              loggedIn = true;
+          }
+          return loggedIn;
+      }
+  
+      // omitted getters & setters
+  }
+  ```
+
+  
+
+* `static/templates/login.html`
+
+  ```html
+  <!DOCTYPE html>
+  <html lang="en" xmlns:th="http://www.thymeleaf.org">
+  <head>
+      <meta charset="UTF-8">
+      <title>Login</title>
+  </head>
+  <body>
+  <form action="/" method="post">
+      Username: <input type="text" name="username" /><br />
+      Password: <input type="password" name="password" /><br />
+      <button type="submit">Log in</button>
+  </form>
+  <p th:text="${message}"></p>
+  </body>
+  </html>
+  ```
+
+
+
+* 实现效果：
+
+  输入错误的username和password
+
+  ![image-20251203172801362](asset/image-20251203172801362.png)
+
+  输入正确的username和password
+
+  ![image-20251203172850211](asset/image-20251203172850211.png)
+
+
+
+==注意：==
+
+* 这里注入的是LoginProcessor的bean，而LoginController只会注入一次LoginProcessor，那怎么实现每次http请求都创建新的LoginProcessor实例？
+
+  ```java
+  @Controller
+  public class LoginController {
+      private final LoginProcessor loginProcessor;
+  
+      public LoginController(LoginProcessor loginProcessor) {
+          // 这里注入的是一个代理对象proxy
+          // 每次请求进来的时候，都会创建一个新的LoginProcessor实例，proxy对象会指向该实例
+          // request A -> proxy指向LoginProcessor A
+          // request B -> proxy指向LoginProcessor B
+          // ...
+          this.loginProcessor = loginProcessor;
+      }
+      // omitted code
+  }
+  ```
+
+  LoginController注入的实际上是LoginProcessor的一个proxy对象，每次有新的http请求到达的时候，都会创建一个新的LoginProcessor对象。则proxy对象会指向这个新的LoginProcessor对象。
+
+* RequestScope和多例的区别是什么？
+
+  * prototype scope: 每次注入/获取Bean时创建新实例
+  * request scope: 每次http请求时创建新实例
+
+
+
+**实现需求2：如果登陆成功，要保证会话范围内，能够持续显示用户username - session scope**
+
+目标：
+
+* 如果登陆成功，从login.html跳转到home.html，并在home.html持续显示用户username - session scope
+* 实现logout功能
+
+
+
+具体实现：
+
+* LoggedUserManagementService
+
+  * 负责在session维度存储username信息
+
+  ```java
+  @Service
+  @SessionScope  // 在同一session维度所有请求都会用同一个bean，保证所有请求都能获得username信息
+  public class LoggedUserManagementService {
+      private String username;
+  
+      public String getUsername() {
+          return username;
+      }
+  
+      public void setUsername(String username) {
+          this.username = username;
+      }
+  }
+  ```
+
+  
+
+* HomeController
+
+  * `/home` - home() - GET: 访问主页面home.html
+    * 首先检查是否需要登出，如果需要登出跳转至login.html，否则继续
+    * 在访问home.html之前，需要检查一下是否已登录（LoggedUserManagementService.username是否不为空）
+      * 是 - 则跳转到home.html
+      * 否 - 则跳转到login.html页面
+
+  ```java
+  @Controller
+  public class HomeController {
+      private LoggedUserManagementService loggedUserManagementService;
+  
+      public HomeController(LoggedUserManagementService loggedUserManagementService) {
+          this.loggedUserManagementService = loggedUserManagementService;
+      }
+  
+      @GetMapping("/home")
+      public String home(@RequestParam(required = false) String logout, Model model) {
+          // 检查是否需要登出
+          if (logout != null) {
+              loggedUserManagementService.setUsername(null);
+              return "redirect:/";
+          }
+          // 检查用户是否已登录
+          boolean loggedIn = false;
+          String username = loggedUserManagementService.getUsername();
+          if (username != null) {
+              loggedIn = true;
+          }
+          // 是则跳转到home页面
+          if (loggedIn) {
+              model.addAttribute("username", username);
+              return "home.html";
+              // 否则跳转到登陆页面
+          } else {
+              return "redirect:/";
+          }
+      }
+  }
+  ```
+
+  
+
+* LoginController更改
+
+  * `/` - login(String username, String password) - POST: 登陆
+
+    通过调用Request Scope的LoginProcessor来实现登陆逻辑
+
+    * 登陆成功 - 将username信息通过LoggedUserManagementService存储到session维度->跳转到home.html
+    * 登陆失败 - 跳转`login.html`，显示`Login failed!`
+
+  ```java
+  @Controller
+  public class LoginController {
+      private final LoginProcessor loginProcessor;
+      private final LoggedUserManagementService loggedUserManagementService;
+  
+      public LoginController(LoginProcessor loginProcessor,
+                             LoggedUserManagementService loggedUserManagementService) {
+          // 这里注入的是一个代理对象proxy
+          // 每次请求进来的时候，都会创建一个新的LoginProcessor实例，proxy对象会指向该实例
+          // request A -> proxy指向LoginProcessor A
+          // request B -> proxy指向LoginProcessor B
+          // ...
+          this.loginProcessor = loginProcessor;
+          this.loggedUserManagementService = loggedUserManagementService;
+      }
+  
+      @GetMapping("/")
+      public String login() {
+          return "login.html";
+      }
+  
+      @PostMapping("/")
+      public String login(@RequestParam String username, @RequestParam String password, Model model) {
+          loginProcessor.setUsername(username);
+          loginProcessor.setPassword(password);
+          boolean loggedIn = loginProcessor.login();
+          if (loggedIn) {
+              // 在session维度存储username信息
+              loggedUserManagementService.setUsername(username);
+              return "redirect:/home";
+          } else {
+              model.addAttribute("message", "Login failed!");
+          }
+          return "login.html";
+      }
+  }
+  ```
+
+
+
+* `static\templates\home.html`
+
+  ```html
+  <!DOCTYPE html>
+  <html lang="en" xmlns:th="http://www.thymeleaf.org">
+  <head>
+      <meta charset="UTF-8">
+      <title>Login</title>
+  </head>
+  <body>
+  <h1>Welcome, <span th:text="${username}"></span></h1>
+  <a href="/home?logout">Log out</a>
+  </body>
+  </html>
+  ```
+
+
+
+* 实现效果
+
+  成功登陆的效果
+
+  ![image-20251204205127072](asset/image-20251204205127072.png)
+
+  点击log out的效果
+
+  ![image-20251204205137388](asset/image-20251204205137388.png)
+
+
+
+**实现需求3：需要统计app范围总的登陆次数 - application scope**
+
+* LoginCountService用于统计总的登陆次数
+
+  ```java
+  @Service
+  @ApplicationScope  // 保证在整个application维度存储loginCount
+  public class LoginCountService {
+      private int loginCount;
+  
+      public void increment() {
+          this.loginCount++;
+      }
+  
+      public int getLoginCount() {
+          return loginCount;
+      }
+  }
+  ```
+
+* LoginController 每次尝试登陆都更新登录次数
+
+  ```java
+  @Controller
+  public class LoginController {
+      // omitted code
+      
+      @PostMapping("/")
+      public String login(@RequestParam String username, @RequestParam String password, Model model) {
+          // 增加尝试登陆的次数
+          loginCountService.increment();
+  
+          loginProcessor.setUsername(username);
+          loginProcessor.setPassword(password);
+          boolean loggedIn = loginProcessor.login();
+          if (loggedIn) {
+              loggedUserManagementService.setUsername(username);
+              return "redirect:/home";
+          } else {
+              model.addAttribute("message", "Login failed!");
+          }
+          return "login.html";
+      }
+  }
+  
+  ```
+
+  
+
+* HomeController 用户成功登陆可以展示登陆次数
+
+  ```java
+  @Controller
+  public class HomeController {
+      // omitted code
+  
+      @GetMapping("/home")
+      public String home(@RequestParam(required = false) String logout, Model model) {
+          // 检查是否需要登出
+          if (logout != null) {
+              loggedUserManagementService.setUsername(null);
+              return "redirect:/";
+          }
+          // 检查用户是否已登录
+          boolean loggedIn = false;
+          String username = loggedUserManagementService.getUsername();
+          if (username != null) {
+              loggedIn = true;
+          }
+          // 是则跳转到home页面
+          if (loggedIn) {
+              model.addAttribute("username", username);
+              model.addAttribute("loginCount", loginCountService.getLoginCount());
+              return "home.html";
+              // 否则跳转到登陆页面
+          } else {
+              return "redirect:/";
+          }
+      }
+  }
+  ```
+
+* `static\templates\home.html`增加展示登陆次数信息
+
+  ```html
+  <!DOCTYPE html>
+  <html lang="en" xmlns:th="http://www.thymeleaf.org">
+  <head>
+      <meta charset="UTF-8">
+      <title>Login</title>
+  </head>
+  <body>
+  <h1>Welcome, <span th:text="${username}"></span>!</h1>
+  <h2>
+      Your login number is
+      <span th:text="${loginCount}"></span>
+  </h2>
+  <a href="/home?logout">Log out</a>
+  </body>
+  </html>
+  ```
+
+  
+
+==注意：==
+
+* 现实场景中，一般不会自定义实现login或授权功能，一般使用Spring Security来实现相关功能。该示例仅用于教学场景。why使用Spring Security？
+  1. 已经封装好，直接用更简单
+  2. 避免出现bug
+  3. 作者推荐Spring Security学习书籍：*Spring Security in Action (Manning, 2020)*
+* 如果要从一个页面重定向要另一个页面，则Controller action方法需要返回这样形式的字符串`redirect:/xxx` 注意，`/xxx`是把请求重定向到另一个Controller action，因此不是`/home.html`，而是`/home`形式。
+* Request scope、Session scope、Application scope only make sense in web apps, and that’s why we call them web scopes.
+* 尽量避免使用Application scope，因为这意味着所有的 web request 共享这些作用范围为`application-scope`的beans，对这些 beans 的写操作会涉及竞态条件，需要加锁等操作保证线程安全，会严重影响性能。且Application scope的bean不会被GC，会一直占用内存。A better approach is to directly store the data in a database.
