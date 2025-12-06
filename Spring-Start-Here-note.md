@@ -3671,3 +3671,578 @@ web scopes包含三个：
 * 如果要从一个页面重定向要另一个页面，则Controller action方法需要返回这样形式的字符串`redirect:/xxx` 注意，`/xxx`是把请求重定向到另一个Controller action，因此不是`/home.html`，而是`/home`形式。
 * Request scope、Session scope、Application scope only make sense in web apps, and that’s why we call them web scopes.
 * 尽量避免使用Application scope，因为这意味着所有的 web request 共享这些作用范围为`application-scope`的beans，对这些 beans 的写操作会涉及竞态条件，需要加锁等操作保证线程安全，会严重影响性能。且Application scope的bean不会被GC，会一直占用内存。A better approach is to directly store the data in a database.
+
+# 10. 实现REST服务
+
+## 10.1 REST是什么
+
+REST是一种设计Web API的风格，用URL标识资源，用HTTP方法标识操作。
+
+REST不是协议，也不是框架，而是一种思想。
+
+* 资源：
+
+  REST的核心思想：把所有东西看作一种资源。例如：
+
+  | 资源       | URL               |
+  | ---------- | ----------------- |
+  | 用户列表   | `/users`          |
+  | 单个用户   | `/users/1`        |
+  | 用户的订单 | `/users/1/orders` |
+
+  这些都是“资源”。
+
+* 操作
+
+  用HTTP的方法`GET/POST/PUT/DELETE`标识对资源要执行什么操作。
+
+  REST强调不要在URL写动作，而是用HTTP标识。
+
+  例如
+
+  不推荐写：
+
+  ```
+  GET /getUsers
+  POST /createUser
+  DELETE /removeUser
+  ```
+
+  推荐写：
+
+  ```
+  GET /users
+  POST /users
+  DELETE /users/1
+  ```
+
+
+
+REST的好处：
+
+* 简洁、规范、清晰、易于维护。
+
+## 10.2 REST如何返回数据给client（概念）
+
+**1. Controller action和REST endpoint是什么？**
+
+* Controller action: controller类中的某个方法
+
+  例如：`getUsers()` 就是一个 **controller action**（也叫 handler method）。
+
+  ```java
+  @GetMapping("/users")
+  public List<User> getUsers() { ... }
+  ```
+
+* REST endpoint: 一个遵循REST风格的URL接口
+
+  例如：`GET /users` 就是一个REST endpoint
+
+* 两者的关系：一个 REST endpoint 通常由一个 controller action 实现，如果项目是100% RESTful，则基本可以视为是一 一对应关系。
+
+**2. RESTful 接口和普通Controller action的写法有什么区别？**
+
+* Controller action return返回的是表示要显示的页面的名称，例如`home.html`。通过Model来向View resolver传递数据，由View resolver对页面进行渲染然后返回给client。
+
+* RESTful接口返回的内容直接作为HTTP Response响应体返回给client，不再需要View resolver。例如如果返回了一个对象，就以下面Json形式在响应体传递给client。
+
+  ```json
+  {
+      "amount": 10001
+  }
+  ```
+
+  ![image-20251206165428303](asset/image-20251206165428303.png)
+
+## 10.3 实现REST 服务（实现）
+
+RESTful controller和普通web controller的区别：
+
+普通web controller
+
+```java
+@Controller
+public class HelloController {
+    @GetMapping("/hello")
+    public String hello() {
+        return "hello.html";  // return a view name
+    }
+}
+```
+
+
+
+RESTful controller
+
+```java
+@Controller
+public class HelloController {
+    @GetMapping("/hello")
+    @ResponseBody
+    public String hello() {
+        return "Hello!";
+    }
+}
+
+// The @ResponseBody annotation tells the dispatcher servlet that 
+// the controller’s action doesn’t return a view name 
+// but the data sent directly in the HTTP response.
+```
+
+
+
+总结：
+
+所以对于一个普通web controller，controller action会返回一个字符串，这个字符串代表的是view name。对于RESTful controller action，会在方法上增加@ResponseBody注解，表示返回的内容直接作为HTTP Reponse响应体返回，而不是表示view name。
+
+
+
+REST这种写法不足在于，如果controller中的方法很多，那么每一个方法上都需要增加@ResponseBody注解，例如：
+
+```java
+@Controller
+public class HelloController {
+    @GetMapping("/hello")
+    @ResponseBody
+    public String hello() {
+        return "Hello!";
+    }
+
+    @GetMapping("/ciao")
+    @ResponseBody
+    public String ciao() {
+        return "Ciao!";
+    }
+}
+```
+
+
+
+为了解决避免出现重复代码，可以在controller类上使用`@Controller`和`@ResponseBody`两个注解，或者直接用`@RestController`（两个注解的结合）。这样表示该controller类的所有action都属于RESTful endpoints。如下：
+
+```java
+@RestController
+public class HelloController {
+    @GetMapping("/hello")
+    public String hello() {
+        return "Hello!";
+    }
+
+    @GetMapping("/ciao")
+    public String ciao() {
+        return "Ciao!";
+    }
+}
+```
+
+
+
+现在我们写好了代码，是时候测试一下效果了，如何发起http请求呢，我们之前都是直接在浏览器输入URL，对于开发者，这种方式是远远不够的，我们需要能够便捷地 1. 指定完整的http请求内容（包括请求体、请求头、URL...） 2. 查看完整的相应内容（包括响应体、响应头...）。因此Postman和Curl是更加专业的两个工具。
+
+postman是图形化工具，更加便于使用。Curl是命令行工具，适合用于脚本。下面展示分别用两种工具测试的效果：
+
+postman：
+
+![image-20251206203656718](asset/image-20251206203656718.png)
+
+
+
+curl：
+
+![image-20251206203740657](asset/image-20251206203740657.png)
+
+（当然curl也可以展示详细的相应内容，需要增加对应的参数，这里不进行详细介绍）
+
+
+
+总结：
+
+* 如何实现REST服务？
+
+  答：其写法和普通的Controller是类似的。区别只在于普通的Controller action返回view name字符串，需要View Resolver来渲染页面返回给client。而RESTful Controller action返回的内容，会直接作为HTTP Response的响应内容。
+
+  如何写编写代码呢？
+
+  1. 在RESTful Controller action上增加@ResponseBody注解 或
+  2. 用@RestController注解替代@Controller注解即可。
+  3. return xxx `xxx`为想要在response body返回的内容，而不是view name
+
+
+
+## 10.4 自定义HTTP Response
+
+HTTP Response包含三部分：
+
+1. Response headers
+2. Response body
+3. Response status
+
+### 10.4.1 如何response body中返回对象
+
+直接在RESTful Controller action中以该对象作为返回值即可。
+
+例一：
+
+Country类，作为返回的对象类型
+
+```java
+public class Country {
+    private String name;
+    private int population;
+
+    public static Country of(String name, int population) {
+        Country country = new Country();
+        country.setName(name);
+        country.setPopulation(population);
+        return country;
+    }
+    // omitted getters and setters
+}
+```
+
+RESTful Controller
+
+```java
+@RestController
+public class CountryController {
+    @GetMapping("/france")
+    public Country france() {  // 直接以Country作为返回类型
+        Country c = Country.of("France", 67);
+        return c;  // 直接返回要返回的对象
+    }
+}
+```
+
+测试效果：
+
+可以看到，Spring是默认将对象转化为Json格式进行返回。
+
+![image-20251206205522776](asset/image-20251206205522776.png)
+
+例二：
+
+返回Country列表
+
+RESTful Controller
+
+```java
+@RestController
+public class CountryController {
+    @GetMapping("/all")
+    public List<Country> countries() {
+        Country c1 = Country.of("France", 67);
+        Country c2 = Country.of("Spain", 45);
+        return List.of(c1, c2);
+    }
+}
+
+```
+
+测试效果：
+
+Spring依然会将列表转化为JSON格式返回，只不过这是数组的形式。
+
+![image-20251206205858891](asset/image-20251206205858891.png)
+
+==注意：==
+
+*  When we use an object (such as Country) to model the data transferred between two apps, we name this object a data transfer object (DTO). We can say that Country is our DTO.
+
+### 10.4.2 如何自定义response status和headers
+
+通过ResponseEntity这个类，可以自定义reponse body、status、headers...
+
+示例：
+
+RESTful Controller
+
+```java
+@RestController
+public class CountryController {
+
+    @GetMapping("/france")
+    public ResponseEntity<Country> france() {
+        Country c = Country.of("France", 67);
+        return ResponseEntity
+                .status(HttpStatus.ACCEPTED)
+                .header("continent", "Europe")
+                .header("capital", "Paris")
+                .header("favorite_food", "cheese and wine")
+                .body(c);
+    }
+}
+```
+
+测试效果：
+
+![image-20251206211153517](asset/image-20251206211153517.png)
+
+![image-20251206211124344](asset/image-20251206211124344.png)
+
+### 10.4.3 异常控制
+
+#### 方法一：每个controller action单独处理
+
+情景介绍：
+
+假设现在有一个支付接口makePayment()，该接口调用service层的processPayment()方法进行业务处理。
+
+- 用户余额充足，支付成功，则Controller action需要返回一个PaymentDetail对象，包含订单支付详情（例如支付的金额等）。
+- 用户余额不足，service层会抛出一个余额不足异常，Controller action需要返回一个ErrorDetail对象，包含异常详情。
+
+代码设计：
+
+* pojo
+  * PaymentDetail
+  * ErrorDetail
+* exception
+  * NotEnoughMoneyException
+* Service
+  * PaymentService
+    * processPayment方法 - 支付成功，返回PaymentDetail；支付失败，抛出NotEnoughMoneyException异常。
+* Controller
+  * PaymentController
+    * makePayment方法 - 调用#PaymentService.processPayment方法，如果执行成功，则返回ResponseEntity with 1.PaymentDetail 2.status 202ACCEPTED；如果获取到异常，则返回ResponseEntity with 1.ErrorDetail 2.status 400 badrequest；
+
+代码实现：
+
+* pojo
+
+  * PaymentDetail
+
+    ```java
+    public class PaymentDetail {
+        private double fee;
+    
+        public double getFee() {
+            return fee;
+        }
+    
+        public void setFee(double fee) {
+            this.fee = fee;
+        }
+    }
+    ```
+
+  * ErrorDetail
+
+    ```java
+    public class ErrorDetail {
+        private String message;
+    
+        public String getMessage() {
+            return message;
+        }
+    
+        public void setMessage(String message) {
+            this.message = message;
+        }
+    }
+    ```
+
+* exception
+
+  * NotEnoughMoneyException
+
+    ```java
+    public class NotEnoughMoneyException extends RuntimeException{
+    }
+    ```
+
+* Service
+
+  * PaymentService
+
+    * processPayment方法 - 支付成功，返回PaymentDetail；支付失败，抛出NotEnoughMoneyException异常。
+
+      ```java
+      @Service
+      public class PaymentService {
+          public PaymentDetail processPayment(double money) {
+              if (money < 100) {
+                  // 如果余额不足100，则抛出异常
+                  throw new NotEnoughMoneyException();
+              }
+              PaymentDetail paymentDetail = new PaymentDetail();
+              paymentDetail.setFee(money);
+              return paymentDetail;
+          }
+      }
+      ```
+
+      
+
+* Controller
+
+  * PaymentController
+
+    * makePayment方法 - 调用#PaymentService.processPayment方法，如果执行成功，则返回ResponseEntity with 1.PaymentDetail 2.status 202ACCEPTED；如果获取到异常，则返回ResponseEntity with 1.ErrorDetail 2.status 400 badrequest；
+
+      ```java
+      @RestController
+      public class PaymentController {
+      
+          private final PaymentService paymentService;
+      
+          public PaymentController(PaymentService paymentService) {
+              this.paymentService = paymentService;
+          }
+      
+          @PostMapping("/payment")
+          public ResponseEntity<?> makePayment(@RequestParam double money) {
+              try {
+                  PaymentDetail paymentDetail = paymentService.processPayment(money);
+      
+                  return ResponseEntity
+                          .status(HttpStatus.ACCEPTED)
+                          .body(paymentDetail);
+              } catch (NotEnoughMoneyException e) {
+                  ErrorDetail errorDetail = new ErrorDetail();
+                  errorDetail.setMessage("Not enough money for this payment.");
+                  return ResponseEntity
+                          .badRequest()  // 将status设为400
+                          .body(errorDetail);
+              }
+          }
+      }
+      ```
+
+
+
+实现效果：
+
+余额不足
+
+![image-20251206214831461](asset/image-20251206214831461.png)
+
+
+
+支付成功
+
+![image-20251206214845647](asset/image-20251206214845647.png)
+
+#### 方法二：异常处理切面（推荐）
+
+上述方法的不足：
+
+1. 如果多个controller action需要处理同一个异常，则存在代码冗余
+2. 异常处理逻辑分散在各个action中，不方便阅读
+
+解决方案：使用切面进行异常处理，这个切面会拦截所有异常，开发者可以在这个切面类中自定义所有异常的处理方式，则一方面，不会再出现代码冗余，另一方面，异常处理逻辑可以集中在这个切面类中，controller action中不需要再对异常进行专门的处理，职能分工，提升代码可读性以及可维护性。
+
+![image-20251206215508115](asset/image-20251206215508115.png)
+
+
+
+将方法一的代码改写为方法二的做法。
+
+Controller只需要关注happy flow（正常/没有异常的case）
+
+```java
+@RestController
+public class PaymentController {
+
+    private final PaymentService paymentService;
+
+    public PaymentController(PaymentService paymentService) {
+        this.paymentService = paymentService;
+    }
+
+    @PostMapping("/payment")
+    public ResponseEntity<PaymentDetail> makePayment(@RequestParam double money) {
+        PaymentDetail paymentDetail = paymentService.processPayment(money);
+
+        return ResponseEntity
+                .status(HttpStatus.ACCEPTED)
+                .body(paymentDetail);
+    }
+}
+```
+
+由advice专门对异常进行统一处理
+
+```java
+@RestControllerAdvice  // 标识这是一个RESTController的增强(advice)
+public class ExceptionControllerAdvice {
+    @ExceptionHandler(NotEnoughMoneyException.class)  // 标识要处理的异常类
+    public ResponseEntity<ErrorDetail> exceptionNotEnoughMoneyHandler() {
+        ErrorDetail errorDetails = new ErrorDetail();
+        errorDetails.setMessage("Not enough money to make the payment.");
+        return ResponseEntity
+                .badRequest()
+                .body(errorDetails);
+    }
+}
+```
+
+和方法一的效果完全一致。
+
+==注意：==
+
+* 如果我们希望在ExceptionHandler的方法获取到完整的Exception信息，可以在方法参数增加这个异常类型的参数，Spring会帮我们将Controller抛出的异常作为参数传入，从而ExceptionHandler能够获取到完整的异常信息。
+
+  例如：
+
+  ```java
+  @RestControllerAdvice
+  public class ExceptionControllerAdvice {
+      @ExceptionHandler(NotEnoughMoneyException.class)
+      public ResponseEntity<ErrorDetail> exceptionNotEnoughMoneyHandler
+          (NotEnoughMoneyException ex) {  // controller抛出的异常会作为参数传入
+          System.out.println(ex.getMessage());
+          // omitted code
+      }
+  }
+
+
+
+## 10.5 接收client在Request Body携带的数据
+
+如果server要接收client在request body携带的数据，需要：
+
+1. To use the request body, you just need to annotate a parameter of the controller’s
+   action with `@RequestBody`.
+2. By default, Spring assumes you used `JSON` to represent the parameter you annotated and will try to `decode the JSON string into an instance of your parameter type`.
+3. In the case Spring cannot decode the JSON-formatted string into that type, the app sends back a response with the status “`400 Bad Request.`” 
+
+
+
+示例：
+
+client发送一个PaymentDetail实例给server，server打印日志，然后将同一个实例返回给client。
+
+Controller
+
+```java
+@RestController
+public class PaymentController {
+    private static Logger logger = Logger.getLogger(PaymentController.class.getName());
+   
+    private final PaymentService paymentService;
+
+    public PaymentController(PaymentService paymentService) {
+        this.paymentService = paymentService;
+    }
+
+    @PostMapping("/payment")
+    public ResponseEntity<PaymentDetails> makePayment(@RequestBody PaymentDetails paymentDetails) {
+        logger.info("Received payment " + paymentDetails.getAmount());
+        return ResponseEntity
+                .status(HttpStatus.ACCEPTED)
+                .body(paymentDetails);
+    }
+}
+```
+
+日志
+
+![image-20251206221918129](asset/image-20251206221918129.png)
+
+响应
+
+![image-20251206221931165](asset/image-20251206221931165.png)
+
+==注意：==
+
+* 从2014年起，GET 请求也可以携带request body
