@@ -3947,7 +3947,7 @@ Spring依然会将列表转化为JSON格式返回，只不过这是数组的形�
 
 ==注意：==
 
-*  When we use an object (such as Country) to model the data transferred between two apps, we name this object a data transfer object (DTO). We can say that Country is our DTO.
+* When we use an object (such as Country) to model the data transferred between two apps, we name this object a data transfer object (DTO). We can say that Country is our DTO.
 
 ### 10.4.2 如何自定义response status和headers
 
@@ -4246,3 +4246,221 @@ public class PaymentController {
 ==注意：==
 
 * 从2014年起，GET 请求也可以携带request body
+
+
+
+# 11. 跨服务调用RESTful接口
+
+RESTful接口不仅是web client会调用，有时候服务之间也会相互调用。
+
+本章介绍一下，不同服务直接如何互相调用RESTful接口。
+
+服务A调用服务B的RESTful接口，有三种方式：
+
+1. OpenFeign：最新、最推荐的方式。
+2. RestTemplate：以前最被广泛使用的方式，虽然不是当前的首选，但是有很多服务在以前使用这种方式实现的。
+3. WebClient：// todo
+
+
+
+接下来通过示例介绍一下这三种方式如何实现。
+
+假设现在我们有一个app A，其中包含的一项功能为支付功能，而支付功能是由另一个服务service Payment来实现的，也就是说，当client尝试进行支付的时候，请求会到达app A，app A会调用service Payment的RESTful接口来实现支付。
+
+app A如何调用service Payment的支付接口，就是我们要讨论的问题。
+
+![image-20251209202840275](asset/image-20251209202840275.png)
+
+
+
+1. 实现一个service Payment
+
+   该支付接口的逻辑为：
+
+   1. RequestHeader接收requestId，RequestBody接收Payment信息
+   2. log打印日志，输出requestId、payment的amount信息
+   3. 为payment对象设置id
+   4. 返回 ResponseHeader中增加requestId，ResponseBody中增加Payment信息
+
+2. 通过上面介绍的三种方式来调用service Payment的RESTful接口
+
+
+
+1. 实现一个service Payment
+
+   该支付接口的逻辑为：
+
+   1. RequestHeader接收requestId，RequestBody接收Payment信息
+   2. log打印日志，输出requestId、payment的amount信息
+   3. 为payment对象设置id
+   4. 返回 ResponseHeader中增加requestId，ResponseBody中增加Payment信息
+
+   ```java
+   public class Payment {
+       private String id;
+       private double amount;
+   	// omitted getter setter
+   }
+   ```
+
+   ```java
+   @RestController
+   public class PaymentController {
+       private static Logger logger = Logger.getLogger(PaymentController.class.getName());
+   
+       @PostMapping("/payment")
+       public ResponseEntity<Payment> createPayment(
+               @RequestHeader String requestId,
+               @RequestBody Payment payment
+       ) {
+          logger.info("request id: " + requestId +
+                  "; payment's amount: " + payment.getAmount() + ".");
+           payment.setId(UUID.randomUUID().toString());
+           return ResponseEntity
+                   .status(HttpStatus.OK)
+                   .header("requestId", requestId)
+                   .body(payment);
+       }
+   }
+
+2. 通过上面介绍的三种方式来调用service Payment的RESTful接口
+
+
+
+## 11.1 OpenFeign
+
+1. 注入OpenFeign相关依赖
+
+   ```xml
+   <dependency>
+       <groupId>org.springframework.cloud</groupId>
+       <artifactId>spring-cloud-starter-openfeign</artifactId>
+   </dependency>
+   ```
+
+   注意OpenFeign是spring-cloud内部的依赖，因此BOM中要引入spring-cloud-dependencies
+
+   ```xml
+   <dependencyManagement>
+           <dependencies>
+               <dependency>
+                   <groupId>org.springframework.boot</groupId>
+                   <artifactId>spring-boot-dependencies</artifactId>
+                   <version>${spring-boot.version}</version>
+                   <type>pom</type>
+                   <scope>import</scope>
+               </dependency>
+               <dependency>
+                   <groupId>org.springframework.cloud</groupId>
+                   <artifactId>spring-cloud-dependencies</artifactId>
+                   <version>${spring-cloud.version}</version>
+                   <type>pom</type>
+                   <scope>import</scope>
+               </dependency>
+           </dependencies>
+       </dependencyManagement>
+   ```
+
+2. 编写FeignClient接口及内部方法
+
+   ```java
+   @FeignClient(name = "payment", url = "${payment.service.url}")
+   public interface PaymentProxy {
+       @PostMapping("/payment")
+       Payment createPayment(@RequestHeader("requestId") String requestId,
+                             @RequestBody Payment payment);
+   }
+   ```
+
+   * `@FeignClient`注解标识这是REST client，在接口上增加`@FeignClient`注解，OpenFeign会自动生成该接口的实现类，并生成对应的bean，注入到Spring容器。
+   * 使用`@FeignClient`注解，至少要指定两个属性 `name` 和 `url` 。
+     * `name`是OpenFeign内部使用到的REST client唯一标识。
+     * `URL`指定要访问的REST的url地址，例如`http://localhost:8080`。注意，类似这样的URL一定要在配置文件进行配置，而不是硬编码在代码中。
+
+3. 配置中启用OpenFeign以及指定OpenFeign client所在的包
+
+   ```java
+   @Configuration
+   // We enable the OpenFeign clients and tell the OpenFeign dependency
+   // where to search for the proxy contracts.
+   @EnableFeignClients(basePackages = "com.tudou.sqch11ex1.proxy")
+   public class ProjectConfig {
+   }
+   ```
+
+4. 编写controller，并注入Feign Client bean，调用方法
+
+   ```java
+   @RestController
+   public class PaymentController {
+       private final PaymentProxy paymentProxy;
+   
+       public PaymentController(PaymentProxy paymentProxy) {
+           this.paymentProxy = paymentProxy;
+       }
+   
+       @PostMapping("/payment")
+       public Payment createPayment(@RequestBody Payment payment) {
+           String requestId = UUID.randomUUID().toString();
+           return paymentProxy.createPayment(requestId, payment);
+       }
+   }
+   ```
+
+5. application.properties
+
+   ```properties
+   # app A在9090端口启动
+   server.port = 9090
+   # service payemnt在8080启动，访问该url以访问payment service
+   payment.service.url = http://localhost:8080
+   ```
+
+6. 测试效果
+
+   ps：在response body中的id是在payment Service中生成的payment id。在控制台打印的这个request Id，是app A生成，然后作为request header参数传给payment service的request Id。
+
+![image-20251209214422733](asset/image-20251209214422733.png)
+
+![image-20251209214449329](asset/image-20251209214449329.png)
+
+
+
+解析：
+
+* 我在看到这里的时候会有一个问题。我访问app A的createPayment接口的时候，只传入了payment对象，requestId是此时生成然后传入paymentProxy.createPayment中的。我很好奇为什么paymentProxy拿到了这个requestId之后，就能够在后续调用payment Service的createPayment方法时作为request header传入呢？
+
+  答：这里只是定义了接口，并没有写真正的HTTP请求逻辑。
+
+  ```java
+  @FeignClient(name = "payment", url = "${payment.service.url}")
+  public interface PaymentProxy {
+      @PostMapping("/payment")
+      Payment createPayment(@RequestHeader("requestId") String requestId,
+                            @RequestBody Payment payment);
+  }
+  ```
+
+  但 Feign 会在运行时为这个接口生成一个代理类（动态代理），这个代理：
+
+  * 看到你标了 @PostMapping("/payment")
+  * 看到你标了 @RequestHeader("requestId") String requestId
+  * 看到 @RequestBody Payment payment
+
+  知道它应该构造一条 HTTP POST 请求：
+
+  ```css
+  POST /payment
+  Header: requestId=<你传入的值>
+  Body: { "amount": ..., ... }
+  ```
+
+  也就是说：**你调用 Java 方法 = Feign 帮你构造并发送 HTTP 请求**
+
+  所以OpenFeign的优点在于，把整个发送HTTP请求的复杂过程，简化成接口+注解的形式。
+
+  通过各个注解，我们可以声明我们需要以*什么HTTP方法*、向*哪里*发送*什么请求*。
+
+  而OpenFeign会根据我们声明的接口和注解，自动帮我们去生成实现类，这个实现类内部的方法，就是运行过程中Spring会真正调用的方法，内部实现了真正的构造HTTP请求，发送HTTP请求，接收HTTP响应的行为。
+
+  
