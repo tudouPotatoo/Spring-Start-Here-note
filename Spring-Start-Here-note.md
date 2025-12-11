@@ -4259,7 +4259,7 @@ RESTful接口不仅是web client会调用，有时候服务之间也会相互调
 
 1. OpenFeign：最新、最推荐的方式。
 2. RestTemplate：以前最被广泛使用的方式，虽然不是当前的首选，但是有很多服务在以前使用这种方式实现的。
-3. WebClient：// todo
+3. WebClient：reactive app首选的方式。
 
 
 
@@ -4342,23 +4342,23 @@ app A如何调用service Payment的支付接口，就是我们要讨论的问题
 
    ```xml
    <dependencyManagement>
-           <dependencies>
-               <dependency>
-                   <groupId>org.springframework.boot</groupId>
-                   <artifactId>spring-boot-dependencies</artifactId>
-                   <version>${spring-boot.version}</version>
-                   <type>pom</type>
-                   <scope>import</scope>
-               </dependency>
-               <dependency>
-                   <groupId>org.springframework.cloud</groupId>
-                   <artifactId>spring-cloud-dependencies</artifactId>
-                   <version>${spring-cloud.version}</version>
-                   <type>pom</type>
-                   <scope>import</scope>
-               </dependency>
-           </dependencies>
-       </dependencyManagement>
+       <dependencies>
+           <dependency>
+               <groupId>org.springframework.boot</groupId>
+               <artifactId>spring-boot-dependencies</artifactId>
+               <version>${spring-boot.version}</version>
+               <type>pom</type>
+               <scope>import</scope>
+           </dependency>
+           <dependency>
+               <groupId>org.springframework.cloud</groupId>
+               <artifactId>spring-cloud-dependencies</artifactId>
+               <version>${spring-cloud.version}</version>
+               <type>pom</type>
+               <scope>import</scope>
+           </dependency>
+       </dependencies>
+   </dependencyManagement>
    ```
 
 2. 编写FeignClient接口及内部方法
@@ -4463,4 +4463,273 @@ app A如何调用service Payment的支付接口，就是我们要讨论的问题
 
   而OpenFeign会根据我们声明的接口和注解，自动帮我们去生成实现类，这个实现类内部的方法，就是运行过程中Spring会真正调用的方法，内部实现了真正的构造HTTP请求，发送HTTP请求，接收HTTP响应的行为。
 
+## 11.2 RestTemplate
+
+为什么OpenFeign逐渐替代RestTemplate：并不是因为RestTemplate有什么不足，而是因为OpenFeign更加易用，简单。很多现有的服务的运行代码依然是使用RestTemplate，因为开发这些服务的时候RestTemplate在当时是最好的方案，因此掌握RestTemplate也是非常必要的。
+
+1. 引入spring-boot-starter-web依赖
+
+   因为`RestTemplate`是`spring-boot-starter-web`依赖下的类
+
+   ```xml
+   <dependency>
+       <groupId>org.springframework.boot</groupId>
+       <artifactId>spring-boot-starter-web</artifactId>
+   </dependency>
+   ```
+
+2. 配置中创建RestTemplate Bean
+
+   ```java
+   @Configuration
+   public class ProjectConfig {
+       @Bean
+       public RestTemplate restTemplate() {
+           return new RestTemplate();
+       }
+   }
+   ```
+
+3. 编写proxy，在proxy方法中实现构造HTTP请求，使用restTemplate实现发送HTTTP请求，接收HTTP响应
+
+   ```java
+   @Component
+   public class PaymentProxy {
+       private final RestTemplate restTemplate;
+   
+       @Value("${payment.service.url}")
+       private String url;
+   
+       public PaymentProxy(RestTemplate restTemplate) {
+           this.restTemplate = restTemplate;
+       }
+   
+       public Payment createPayment(Payment payment) {
+           // 1. 构造url
+           String url = this.url + "/payment";
+           // 2. 构造HTTP request headers
+           String requestId = UUID.randomUUID().toString();
+           HttpHeaders headers = new HttpHeaders();
+           headers.add("requestId", requestId);
+           // 3. 构造HTTP Entity（HTTP请求体，包含request body、request header）
+           HttpEntity<Payment> httpEntity = new HttpEntity<>(payment, headers);
+           // 4. 发送http请求
+           ResponseEntity<Payment> responseEntity = restTemplate.exchange(url, HttpMethod.POST, httpEntity, Payment.class);
+           // 5. 返回response body
+           return responseEntity.getBody();
+       }
+   }
+   ```
+
+4. 编写Controller，注入proxy bean，调用方法
+
+   ```java
+   @RestController
+   public class PaymentController {
+       private final PaymentProxy paymentProxy;
+   
+       public PaymentController(PaymentProxy paymentProxy) {
+           this.paymentProxy = paymentProxy;
+       }
+   
+       @PostMapping("/payment")
+       public Payment createPayment(@RequestBody Payment payment) {
+           return paymentProxy.createPayment(payment);
+       }
+   }
+   ```
+
+5. application.properties
+
+   ```properties
+   # app A在9090端口启动
+   server.port = 9090
+   # service payemnt在8080启动，访问该url以访问payment service
+   payment.service.url = http://localhost:8080
+   ```
+
+6. 测试效果
+
+   ![image-20251210170112913](asset/image-20251210170112913.png)
+
+   ![image-20251210170146909](asset/image-20251210170146909.png)
+
+解析：
+
+* 可以非常明显地看到，RestTemplate的编码复杂度比OpenFeign高得多，RestTemplate需要手动编写生成HTTP header的代码、生成HTTP Entity（请求体）的代码，再调用RestTemplate的exchange方法才能真正调用payment service。而OpenFeign只需要定义一个接口，通过注解的方式进行配置，大大减少了代码量，也很大程度提高了可读性
+
+## 11.3 WebClient
+
+结论：如果是一个reactive app，则使用WebClient；如果不是reactive app，则使用OpenFeign。
+
+* 非reactive app是什么
+
+  通过举例的方式来说明。
+
+  假设A银行业务需要开发一个新的系统，该系统用于统计一个顾客的总负债情况。考虑到一个顾客可能在多家不同银行都设立了账户，因此这个系统的实现思路如下：
+
+  1. 接收到统计某顾客总负债情况请求，userId为请求参数
+  2. 根据userId从service x 获取用户信息
+  3. 根据userId从service y 获取用户在本银行的负债情况
+  4. 根据1. 得到的用户信息从service z 获取用户在外部银行的负债信息
+  5. 将内部负债和外部负债值进行加和，得到该名用户的总负债值
+
+  对于非reactive app，每一个请求都由一个线程来负责。
+
+  例如现在有一个查询顾客Alice的负债情况的请求，此时系统会分配一个线程，这个线程负责完整的1-5的工作。
+
+  ![image-20251211165144437](asset/image-20251211165144437.png)
+
+  由于系统调用service x、y、z都是IO操作，该线程在每一个IO操作的时候都需要闲置等待，因此，本质上是一个线性操作。
+
+  ![image-20251211165316678](asset/image-20251211165316678.png)
+
+  这种方式存在的问题是什么？
+
+  * 当线程遇到IO操作的时候，会被阻塞，此时该线程不能做其它的事情，只能闲置等待IO操作完成。线程即占用着宝贵的内存，还不在工作。
+  * 部分task之间并没有相互依赖的关系。例如Figure 11.8图中的2、3步，他们是相互独立的，第3步并不依赖第2步的执行，因此它们实际上是可以并行地计算的。
+
+* reactive app是什么
+
+  Reactive apps change the idea of having one atomic flow in which one thread executes all its tasks from the beginning to the end. With reactive apps, we think of tasks as independent, and multiple threads can collaborate to complete a flow composed of multiple tasks.
+
+  也就是说，reactive app会将所有的task都看作相互独立的，所有线程都可以去执行的。
+
+  假设现在有两个线程在共同执行一些任务，线程A执行执行任务1，线程B正在执行任务2，此时任务1正在执行IO操作，线程1被阻塞，则线程1继续去执行其它任务，然后任务1 IO完成之后继续执行任务1。或者线程B空闲之后如果发现任务1可以继续往下执行了，线程B可以去执行。
+
   
+
+  ![image-20251211170546768](asset/image-20251211170546768.png)
+
+  类比：
+
+  非reactive app：厨房的厨师A负责做水煮鱼这道菜，他每接受到一个水煮鱼订单，就烧水->切菜->炒菜，只有水烧开了他才会切菜，烧水过程中他只会站在那里等待水烧开。他不会边切菜边等水烧开，等水烧开的过程中，就算有其他厨师非常忙，他也不会去帮忙，因此效率是比较低的。
+
+  reactive app：同样的一个厨师负责做水煮鱼，他会先烧水，等水开的过程会去切菜，提高效率。当他没事干的时候还会去帮其它的厨师。大家相互帮忙，提升效率。
+
+* reactive app如何表达task之间的依赖关系？
+
+  producer + subscriber
+
+  subscriber 订阅 producer，表示当producer task执行完毕，subscriber task会根据producer task的执行结果开始执行。
+
+  银行示例task之间的依赖关系如图：通过这个依赖关系，可以知道TASK C、D没有相互的依赖关系，可以同时执行。
+
+  ![image-20251211173445778](asset/image-20251211173445778.png)
+
+* WebClient是如何体现reactive app的思想的
+
+  通过Mono。
+
+  WebClient是HTTP请求的执行器。Mono表示一个task的异步结果。
+
+  如果我们给一个方法的入参传入的是一个Mono，表示这个方法 subscribe to Mono对应的task，只有当这个task执行完毕，这个方法才能够执行。
+
+  如果一个方法的返回值类型是Mono，则调用这个方法的地方 就是subscribe to这个方法，这个方法执行返回返回成功，调用的地方才能够继续往下执行。
+
+  也就是说，通过Mono我们能够给task之间建立producer和consumer这样的依赖关系。
+
+  因此得以builds the flow, not by chaining them on a thread, but by linking the dependencies between tasks through producers and consumers 
+
+  
+
+  注意：Mono只是帮助我们搭建任务之间的producer-consumer这样的依赖关系。只有Spring WebFlux订阅整个WebClient链的时候，订阅关系才会生效，单独的Mono的使用并没有真正的订阅关系。
+
+  当收到一个 HTTP 请求时，Spring WebFlux 调用你的 Controller 方法 -> Controller 返回一个Mono对象，例如`Mono<Payment>` -> 然后 Spring WebFlux 会订阅这个 Mono，从而触发整个 WebClient 链条的执行。
+
+  
+
+* WebClient的开发流程是什么
+
+  1. 引入WebFlux依赖
+
+     ```xml
+     <dependency>
+         <groupId>org.springframework.boot</groupId>
+         <artifactId>spring-boot-starter-webflux</artifactId>
+     </dependency>
+     ```
+
+  2. 配置创建WebClient Bean
+
+     ```java
+     @Configuration
+     public class ProjectConfig {
+         @Bean
+         public WebClient webClient() {
+             return WebClient
+                     .builder()
+                     .build();
+         }
+     }
+     ```
+
+  3. 创建proxy类，注入WebClient bean，该bean负责真正的构造http请求、发送http请求、接收http响应
+
+     ```java
+     @Component
+     public class PaymentProxy {
+         private final WebClient webClient;
+     
+         @Value("${payment.service.url}")
+         private String url;
+     
+         public PaymentProxy(WebClient webClient) {
+             this.webClient = webClient;
+         }
+     
+         public Mono<Payment> createPayment(String requestId, Payment payment) {
+             // 1. 构造url
+             String url = this.url + "/payment";
+             // 2. 发起http请求
+             return webClient
+                     .post()
+                     .uri(url)
+                     .header("requestId", requestId)
+                     .body(Mono.just(payment), Payment.class)
+                     .retrieve()
+                     .bodyToMono(Payment.class);
+         }
+     }
+     ```
+
+  4. 创建controller，注入proxy bean，调用方法
+
+     ```java
+     @RestController
+     public class PaymentController {
+         private final PaymentProxy paymentProxy;
+     
+         public PaymentController(PaymentProxy paymentProxy) {
+             this.paymentProxy = paymentProxy;
+         }
+     
+         @PostMapping("/payment")
+         public Mono<Payment> createPayment(@RequestBody Payment payment) {
+             String requestId = UUID.randomUUID().toString();
+             return paymentProxy.createPayment(requestId, payment);
+         }
+     }
+
+  5. application.properties
+
+     ```properties
+     server.port=9090
+     payment.service.url=http://localhost:8080
+     ```
+
+  6. 测试效果
+
+     ![image-20251211201741300](asset/image-20251211201741300.png)
+
+     ![image-20251211201804918](asset/image-20251211201804918.png)
+
+  proxy这段代码的task之间的依赖关系：
+
+  ![image-20251211194920404](asset/image-20251211194920404.png)
+
+## 11.4 总结
+
+非reactive app - 使用OpenFeign
+
+​    reactive app - 使用WebClient
