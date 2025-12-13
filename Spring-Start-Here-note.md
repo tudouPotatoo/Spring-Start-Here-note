@@ -4733,3 +4733,293 @@ app A如何调用service Payment的支付接口，就是我们要讨论的问题
 非reactive app - 使用OpenFeign
 
 ​    reactive app - 使用WebClient
+
+
+
+# 12. 使用data source
+
+## 12.1 data source是什么
+
+问题1：Java如何建立DB连接？
+
+Java其实不会直接和DB进行连接，而是和DBMS进行连接，DBMS（the database management system） 用于管理DB中的数据，通过DBMS我们可以方便地进行增删改查。
+
+ok 问题转化为Java如何建立和DBMS的连接？在后续的讨论钟，我们不严格对DBMS和DB的表述进行区分。
+
+使用JDBC。JDBC是什么？
+
+JDBC: 是Java所提供的用于和关系型数据库进行连接的功能（Java Database Connectivity）。
+
+JDBC仅提供抽象（接口），不提供连接各个类型的DBMS（MySQL、Postgres、Oracle）的功能实现，具体的实现称为JDBC driver，由具体的DBMS厂商根据JDBC所提供的接口进行实现。
+
+不同的DBMS会提供不同的JDBC driver实现，例如MySQL会提供MySQL JDBC driver，Oracle会提供Oracle JDBC driver。在进行Java开发的过程中，如果我们是要连接MySQL数据库，则我们引入MySQL JDBC driver的依赖，就可以与之建立连接了。
+
+那具体怎么建立连接呢？
+
+JDBC提供了一个DriverManager类，这个类提供了一个getConnetion(...)方法用于建立连接
+
+```java
+Connection con = DriverManager.getConnection(url, username, password);
+```
+
+问题2：
+
+直接使用JDBC建立连接，存在什么问题吗？
+
+我们在程序中，直接使用DriverManager类来建立连接，则每一次进行DB操作，都需要调用getConnection(...)方法，那每一次都需要创建新的连接，进行验证，需要多次进行重复的操作。就类似于你去酒吧点酒，酒保需要查看你的身份证看是否成年，然后你每点一次酒都要检查一次身份证，是不合理的。
+
+![image-20251212161743469](asset/image-20251212161743469.png)
+
+问题3：如何解决这个问题？
+
+引入data source。
+
+data source的作用就是帮助我们管理数据库连接，它能够保证能够复用连接的时候尽量复用连接，只有在必须的情况下，才会创建新的连接，以提高性能。
+
+![image-20251212161856086](asset/image-20251212161856086.png)
+
+所以我们现在知道了data source是什么，data source就是一个负责管理数据库连接的组件，它实现了复用数据库连接，避免重复创建新连接，只有在必要的时候才会创建新连接，提升我们的服务性能。
+
+## 12.2 JdbcTemplate的使用
+
+这一节我们来介绍一下如何使用JdbcTemplate来建立DB连接，并实现基本的数据库操作。
+
+JdbcTemplate是什么？
+
+JdbcTemplate 是 Spring 提供的 JDBC 工具类，用来简化数据库访问。它本身不管理连接，也不直接和数据库通信，而是通过 DataSource 获取 Connection，再调用 JDBC API（由 JDBC Driver 实现）执行 SQL。
+
+为什么要用JdbcTemplate？
+
+如果我们使用JDBC接口提供的方法来执行SQL，其实并不方便，下面这段代码只是向purchase表中插入一条数据，需要写这么多行代码，更不必说已经省略了catch块中的代码。
+
+```java
+String sql = "INSERT INTO purchase VALUES (?,?)";
+try (PreparedStatement stmt = con.prepareStatement(sql)) {
+stmt.setString(1, name);
+stmt.setDouble(2, price);
+stmt.executeUpdate();
+} catch (SQLException e) {
+// do something when an exception occurs
+}
+```
+
+JdbcTemplate就是Spring提供的帮我们进一步减少代码量的工具类。
+
+怎么使用JdbcTemplate？
+
+以下面这个例子来介绍：
+
+有一张Purchase表，这个表中包含三列：id、product、price
+
+* id—An auto-incrementing unique value that also takes the responsibility of the primary key of the table
+* product—The name of the purchased product
+* price—The purchase price
+
+![image-20251213122256813](asset/image-20251213122256813.png)
+
+**业务需求：**
+
+* 访问GET-/purchase可以获得purchase表中的所有数据
+* 访问POST-/purchase可以向purchase插入一条新的数据
+
+**代码设计：**
+
+* Repository层：
+  * PurchaseRepository
+    * void storePurchase(Payment) 插入一条新数据
+    * List\<Purchase> findAllPurchase() 获取所有数据
+* Controller层（调用Repository层的方法）
+  * GET-/purchase-storePurchase(Payment)
+  * POST-/purchase-findAllPurchase()
+
+![image-20251213122211139](asset/image-20251213122211139.png)
+
+**代码实现：**
+
+* schema.sql
+
+  示例使用了H2数据库，在resources目录下新增schema.sql文件，可以在里面编写DDL，Spring启动时会执行。【该方法仅适用于学习】
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS purchase (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      product varchar(50) NOT NULL,
+      price double NOT NULL
+  );
+  ```
+
+* model层
+
+  ```java
+  public class Purchase {
+      private Integer id;
+      private String product;
+      private BigDecimal price;
+  	// omitted getter/setter
+  }
+  ```
+
+* pom.xml
+
+  ```xml
+  <!--引入该依赖才能够实现web功能-->
+  <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+  </dependency>
+  <!--引入该依赖：
+  	1. 触发 Spring Boot 自动创建 DataSource Bean
+  	2. 引入JdbcTemplate
+  	3. 自动创建JdbcTemplate Bean
+  -->
+  <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
+  </dependency>
+  <!--We add the H2 dependency to get both
+          an in-memory database for this example and
+          a JDBC driver to work with it.-->
+  <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <!--The app only needs the database and the JDBC driver at runtime.
+              The app doesn't need them for compilation-->
+      <scope>runtime</scope>
+  </dependency>
+  ```
+
+* Repository层
+
+  ```java
+  @Repository
+  public class PurchaseRepository {
+      private final JdbcTemplate jdbcTemplate;
+  
+      public PurchaseRepository(JdbcTemplate jdbcTemplate) {
+          this.jdbcTemplate = jdbcTemplate;
+      }
+  
+      public void storePurchase(Purchase purchase) {
+          String sql = "INSERT INTO PURCHASE VALUES (NULL, ?, ?)";
+          jdbcTemplate.update(sql, purchase.getProduct(), purchase.getPrice());
+      }
+  
+      public List<Purchase> findAllPurchase() {
+          String sql = "SELECT * FROM PURCHASE";
+          // We implement a RowMapper object
+          // that tells JdbcTemplate how to map a 
+          // row in the result set into a Purchase
+          // object. In the lambda expression,
+          // parameter “r” is the ResultSet (the
+          // data you get from the database),
+          // while parameter “i” is an int
+          // representing the row number.
+          // JdbcTemplate will use
+          // this logic for each row in the
+          // result set.
+          RowMapper rowMapper = (r, i) -> {
+              Purchase purchase = new Purchase();
+              purchase.setId(r.getInt("id"));
+              purchase.setProduct(r.getString("product"));
+              purchase.setPrice(r.getBigDecimal("price"));
+              return purchase;
+          };
+          return jdbcTemplate.query(sql, rowMapper);
+      }
+  }
+  ```
+
+* Controller层
+
+  ```java
+  @RestController
+  @RequestMapping("/purchase")
+  public class PurchaseController {
+      private final PurchaseRepository purchaseRepository;
+  
+      public PurchaseController(PurchaseRepository purchaseRepository) {
+          this.purchaseRepository = purchaseRepository;
+      }
+  
+      @PostMapping
+      public void storePurchase(@RequestBody Purchase purchase) {
+          purchaseRepository.storePurchase(purchase);
+      }
+  
+      @GetMapping
+      public List<Purchase> findAllPurchase() {
+          return purchaseRepository.findAllPurchase();
+      }
+  }
+  ```
+
+* 测试效果
+
+  ![image-20251213132722562](asset/image-20251213132722562.png)
+
+  ![image-20251213132855939](asset/image-20251213132855939.png)
+
+​	
+
+==注意：==
+
+* repository是什么意思：
+
+  A repository is a class responsible with working with a database.
+
+* 为什么Purchase的price属性类型为BigDecimal，而不是double/float
+  * 使用double/float在计算过程中可能会丧失精度，对精度敏感的属性如价格，都应该用BigDecimal类型
+
+* JdbcTemplate实例是谁创建的 为什么可以直接注入
+
+  * spring-boot-starter-jdbc依赖内部包含HikariCP data source依赖和spring-jdbc依赖（其中包含JdbcTemplate类）。
+
+  * 当我们引入spring-boot-starter-jdbc依赖，实际上也引入了HikariCP data source依赖。
+
+  * 如果我们没有引入其他的datasource依赖，也没有手动定义datasource bean，则Spring Boot自动装配会帮我们自动创建HikariCP data source的Bean。
+
+  * 有了data source Bean，SpringBoot自动装配也会帮我们自动创建JdbcTemplate的Bean。
+
+  * 因此我们可以在Repository类直接注入JdbcTemplate bean。
+
+  * 又因为我们还引入了h2数据库依赖，这个依赖不仅包含h2依赖，还包含了h2 jdbc driver依赖。
+
+    h2 jdbc driver会被注册为对象。
+
+    ```xml
+    <dependency>
+        <groupId>com.h2database</groupId>
+        <artifactId>h2</artifactId>
+        <scope>runtime</scope>
+    </dependency>
+    ```
+
+  * 则JdbcTemplate可以通过data source bean来获取connection，调用JDBC接口，最终由h2 jdbc driver对这些接口的实现，完成对数据库的操作。
+
+* RowMapper是什么
+
+  RowMapper是一个对象，通过对该对象的配置，可以指定SELECT SQL执行结果ResultSet如何和Java类进行映射。
+
+  也就是如何将查询结果转化为目标的Java类对象。
+
+* JDBCTemplate SELECT query steps：
+
+  ![image-20251213141952645](asset/image-20251213141952645.png)
+
+* Jdbc vs Jdbc Driver vs JdbcTemplate vs DriverManager vs DataSource
+
+  * Jdbc是JDK定义的、用于和DB交互的接口
+
+  * Jdbc Driver是各个数据库厂商对Jdbc接口的实现
+
+  * JdbcTemplate是Spring提供的一个工具类，因为Jdbc的接口对于开发者来说并不方便使用，JdbcTemplate进行了进一步封装，对于开发者更加简单易用。【底层会从data source获取连接，调用Jdbc接口来实现和DB交互】
+
+  * DriverManager用于管理所有的JdbcDriver，根据URL来分配请求给对应的Jdbc Driver。
+
+    例如url为 `jdbc:mysql://localhost:3306`，就会找到MySQL的Driver来处理请求。
+
+  * DataSource高效管理连接，尽量复用，必要时才创建新连接，提升性能。
+
+  
+
+  
