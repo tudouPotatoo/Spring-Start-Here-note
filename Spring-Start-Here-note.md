@@ -5020,6 +5020,117 @@ JdbcTemplate就是Spring提供的帮我们进一步减少代码量的工具类�
 
   * DataSource高效管理连接，尽量复用，必要时才创建新连接，提升性能。
 
-  
+## 12.3 自定义数据源
 
-  
+12.2的例子中，我们使用的是H2内存数据库，该数据库仅适用于教学，但是在真正实践中，我们通常使用MySQL、Oracle等可以进行持久化的数据库，那我们应该如何定义数据源？下面通过将12.2中的例子中的H2数据库改为使用MySQL数据库来介绍，总共分三步：
+
+1. 引入MySQL JDBC driver
+2. 在application.properties配置文件中配置连接信息（url、username、password...）
+3. 让SpringBoot根据配置信息生成默认的DataSource Bean / 自定义DataSource Bean
+
+
+
+1. 引入MySQL JDBC driver
+
+   总共需要以下依赖
+
+   ```xml
+   <dependency>
+       <groupId>org.springframework.boot</groupId>
+       <artifactId>spring-boot-starter-web</artifactId>
+   </dependency>
+   <dependency>
+       <groupId>org.springframework.boot</groupId>
+       <artifactId>spring-boot-starter-jdbc</artifactId>
+   </dependency>
+   <dependency>
+       <groupId>mysql</groupId>
+       <artifactId>mysql-connector-java</artifactId>
+       <scope>runtime</scope>
+   </dependency>
+   ```
+
+2. 在application.properties配置文件中配置连接信息（url、username、password...）
+
+   ```properties
+   # defines the location to the database.
+   spring.datasource.url=jdbc:mysql://localhost/spring_start_here?useLegacyDatetimeCode=false&serverTimezone=UTC
+   spring.datasource.username=root
+   spring.datasource.password=password
+   # We set the initialization mode to 
+   # “always” to instruct Spring Boot to run
+   # the queries in the “schema.sql” file
+   spring.sql.init.mode=always
+   ```
+
+   注意：如果是使用SpringBoot自动装配来创建DataSource Bean，则配置的前缀必须是`spring.datasource.*`，这是 Spring Boot 官方定义的标准前缀。
+
+   
+
+3. 让SpringBoot根据配置信息生成默认的DataSource Bean（自动装配） / 自定义DataSource Bean
+
+   1. SpringBoot根据application.properties文件中的`spring.datasource`配置自动创建DataSource Bean（自动装配）。
+
+      如果要使用SpringBoot默认生成的DataSource Bean，则不需要任何操作，到这里就配置好了MySQL数据源，就能够通过注入JDBCTemplate和MySQL数据库交互了。
+
+      SpringBoot默认使用的是HikariCP DataSource。
+
+      
+
+   2. 自定义DataSource Bean
+
+      *什么时候需要自定义DataSource Bean？*
+
+      其中一个场景是多数据源场景：如果应用需要同时连多个数据库，则意味着需要多个DataSource Bean，而SpringBoot默认只会创建一个，因此在这种场景下，需要开发者手动创建。
+
+      开发者手动创建之后，SpringBoot探测到已经有了，就不会进行自动创建。
+
+      注意：在有多个Bean的情况下，注入的时候需要通过@Qualifier注解来指定注入的是哪个Bean。
+
+      简单来说就是，当自动配置不能满足开发者的需求的时候，就可以自定义Bean。
+
+      
+
+      *如何自定义DataSource Bean？*
+
+      ```java
+      @Configuration
+      public class ProjectConfig {
+          @Value("${datasource.url}")
+          private String datasourceUrl;
+      
+          @Value("${datasource.username}")
+          private String datasourceUsername;
+      
+          @Value("${datasource.password}")
+          private String datasourcePassword;
+      
+          //The method returns a DataSource object. If
+          //Spring Boot finds a DataSource already exists in
+          //the Spring context it doesn’t configure one.
+          @Bean
+          public DataSource dataSource() {
+              //We’ll use HikariCP as the data source implementation
+              // for this example. However, when you define the bean
+              // yourself, you can choose other implementations if
+              // your project requires something else.
+              HikariDataSource dataSource = new HikariDataSource();
+              dataSource.setJdbcUrl(datasourceUrl);
+              dataSource.setUsername(datasourceUsername);
+              dataSource.setPassword(datasourcePassword);
+              dataSource.setConnectionTimeout(1000);
+              return dataSource;
+          }
+      }
+      ```
+
+      ```properties
+      # 由于是自定义Bean，这里的配置可以自定义，见明知义即可
+      datasource.url=jdbc:mysql://localhost/spring_start_here?useLegacyDatetimeCode=false&serverTimezone=UTC
+      datasource.username=root
+      datasource.password=password
+      ```
+
+      至此，自定义MySQL数据源配置完成，可以通过注入JDBCTemplate和MySQL数据库交互了。
+
+      自动装配的思想：引入依赖，SpringBoot会根据配置自动创建Bean，开发者可以直接注入使用。如果开发者自定义了Bean，则SpringBoot会使用这个Bean，不会再进行默认创建。也体现出了Spring convention over configuration的哲学。
