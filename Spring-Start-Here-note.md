@@ -5134,3 +5134,339 @@ JdbcTemplate就是Spring提供的帮我们进一步减少代码量的工具类�
       至此，自定义MySQL数据源配置完成，可以通过注入JDBCTemplate和MySQL数据库交互了。
 
       自动装配的思想：引入依赖，SpringBoot会根据配置自动创建Bean，开发者可以直接注入使用。如果开发者自定义了Bean，则SpringBoot会使用这个Bean，不会再进行默认创建。也体现出了Spring convention over configuration的哲学。
+
+# 13. 事务
+
+## 13.1 事务是什么
+
+事务是一组操作，这组操作要么全部执行成功，要么全部都不执行，没有中间状态。
+
+例如A向B转账100元包含两个动作：A余额-100，B余额+100。事务就是这两个动作要么全部执行成功，要么全部不执行，不存在A扣款成功，但是B余额没有增加的情况。
+
+## 13.2 在Spring中如何使用事务
+
+使用@Transactional注解。
+
+* 如果在一个方法上增加@Transactional，则这个方法组成一个事务，如果方法执行过程中抛出了运行时异常，则会进行回滚。只有整个方法执行成功，事务才会被提交。
+* 如果在一个类上面增加@Transactional注解，其作用等同于在这个类中的所有方法上都增加这个注解。
+* 当在方法和类上都使用了@Transactional注解，则方法上的注解优先级更高。
+
+## 13.3 @Transactional注解的底层执行机制
+
+Spring中@Transactional注解底层实现机制是AOP。
+
+拦截所有增加了@Transactional注解的方法，在方法执行之前开启事务，在方法执行成功之后提交事务。如果捕获到了运行时异常，则进行回滚。
+
+![image-20251218171046038](asset/image-20251218171046038.png)
+
+==注意：切面必须要捕获到方法抛出的异常，才会进行回滚。如果在transferMoney方法内部就catch了异常并进行了处理，且没有将异常throw出去，则切面是捕获不到异常的，因此事务也会成功提交。==
+
+![image-20251218171633988](asset/image-20251218171633988.png)
+
+## 13.4 哪种类型的异常会进行回滚
+
+Java有两种异常：`RuntimeException` 和 `Checked Exception` 
+
+Spring的事务机制是只有当捕获到 `RuntimeException` 异常才会进行回滚。
+
+* `RuntimeException` 和 `Checked Exception` 的区别是什么
+
+  * `Checked Exception`：编译器强制检查。必须使用 `try-catch` 捕获，或者在方法签名中用 `throws` 声明。
+
+    例如：这段代码会报红，无法编译通过，必须处理它可能抛出的FileNotFoundException异常
+
+    ![image-20251218192801689](asset/image-20251218192801689.png)
+
+    只有try-catch对该异常进行了处理，或者将该异常throw出去，才能够编译通过
+
+    ![image-20251218193042296](asset/image-20251218193042296.png)
+
+  * `RuntimeException`：编译器不检查。不强制要求处理，代码可以正常编译。
+
+    例如下面这段代码，除0运行时会抛出异常，但这属于运行时异常，编译器不会检查。
+
+    ![image-20251218193238793](asset/image-20251218193238793.png)
+
+* 为什么仅当捕获到 `RuntimeException` 异常才会进行回滚。
+
+  因为 `Checked Exception` 类型的异常，Spring认为开发者是在编写代码的时候就已经意识到了该种异常会有可能抛出，因此Spring认为开发者会通过代码逻辑来指定后续操作（修复/手动撤回），因此这属于可控事件。
+
+  Spring认为就算抛出了这种异常，也是在开发者意料之中的，并不属于意料之外的异常，因此不会进行回滚。
+
+  其设计理念是：`Checked Exception`异常被视为一种“可预测的场景”，应该由开发者的逻辑去管理，而不是由事务框架强制拦截。
+
+  而 `RuntimeException` 异常，不是在开发者意料之中的异常，因此如果抛出了这类异常，统一进行回滚处理。
+
+* 如何自定义对于哪些类型的异常进行回滚
+
+  如果你希望对于任何异常，都要进行回滚，则可以使用@Transactional注解的rollbackFor属性来显式指定抛出哪些类型的异常时进行回滚。
+
+  ```java
+  // 告诉 Spring：不管是运行时异常还是受检异常，只要报错，全给我回滚！
+  @Transactional(rollbackFor = Exception.class) 
+  public void saveOrder() {
+      // 业务逻辑
+  }
+  ```
+
+## 13.5 代码实践
+
+定义一个转账系统，该系统提供两种功能：
+
+1. 查询所有账户信息
+2. 转账
+
+![image-20251218202826054](asset/image-20251218202826054.png)
+
+
+
+代码实现：
+
+* 数据库表设计
+
+  * account表包含三列
+
+    * id - 自增主键
+    * name - 用户名
+    * amount - 余额
+
+  * 使用H2数据库
+
+    * schema.sql 启动时自动执行该sql语句创建数据表
+
+      ```sql
+      create table account (
+          id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(50) NOT NULL,
+          amount DOUBLE NOT NULL
+      );
+      ```
+
+    * data.sql 启动时自动执行该sql语句插入新数据
+
+      ```sql
+      INSERT INTO account VALUES (NULL, 'Helen Down', 1000);
+      INSERT INTO account VALUES (NULL, 'Peter Read', 1000);
+      ```
+
+* model
+
+  * Account
+
+    ```java
+    public class Account {
+        private long id;
+        private String name;
+        private BigDecimal amount;
+    
+        // omitted getter & setter
+    }
+    
+    ```
+
+* pom.xml
+
+  ```xml
+  <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
+  </dependency>
+  <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+  </dependency>
+  <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <scope>runtime</scope>
+  </dependency>
+  ```
+
+* repository层
+
+  * findAccountById(long id) - 根据id获取Account信息
+
+  * updateAmount(long id, BigDecimal amount) - 更新余额信息
+
+  * findAllAccount() - 获取所有Account信息
+
+    ```java
+    @Repository
+    public class AccountRepository {
+        private final JdbcTemplate jdbcTemplate;
+    
+        public AccountRepository(JdbcTemplate jdbcTemplate) {
+            this.jdbcTemplate = jdbcTemplate;
+        }
+    
+        public Account findAccountById(long id) {
+            String sql = "SELECT * FROM account WHERE id = ?";
+            return jdbcTemplate.queryForObject(sql, new AccountRowMapper(), id);
+        }
+    
+        public void updateAmount(long id, BigDecimal amount) {
+            String sql = "UPDATE account SET amount = ? WHERE id = ?";
+            jdbcTemplate.update(sql, amount, id);
+        }
+    
+        public List<Account> findAllAccount() {
+            String sql = "SELECT * FROM account";
+            return jdbcTemplate.query(sql, new AccountRowMapper());
+        }
+    }
+    ```
+
+  * rowMapper
+
+    * AccountRowMapper
+
+      ```java
+      public class AccountRowMapper implements RowMapper<Account> {
+          @Override
+          public Account mapRow(ResultSet rs, int rowNum) throws SQLException {
+              Account account = new Account();
+              account.setId(rs.getInt("id"));
+              account.setName(rs.getString("name"));
+              account.setAmount(rs.getBigDecimal("amount"));
+              return account;
+          }
+      }
+      ```
+
+      
+
+* service层
+
+  * getAllAccount() - 获取所有account信息
+
+  * transferMoney(long senderId, long receiverId, double amount) - 进行转账
+
+    ```java
+    @Service
+    public class AccountService {
+        private final AccountRepository accountRepository;
+    
+        public AccountService(AccountRepository accountRepository) {
+            this.accountRepository = accountRepository;
+        }
+    
+        public List<Account> getAllAccount() {
+            return accountRepository.findAllAccount();
+        }
+    
+        @Transactional  // 涉及多次DB操作 这多个操作组成一个事务
+        public void transferMoney(long senderId, long receiverId, BigDecimal amount) {
+            // 1. 获取sender信息
+            Account senderAccount = accountRepository.findAccountById(senderId);
+            // 2. 获取receiver信息
+            Account receiverAccount = accountRepository.findAccountById(receiverId);
+            // 3. 计算sender最新余额
+            BigDecimal senderNewAmount = senderAccount.getAmount().subtract(amount);
+            // 4. 计算receiver最新余额
+            BigDecimal receiverNewAmount = receiverAccount.getAmount().add(amount);
+            // 3. 更新sender余额
+            accountRepository.updateAmount(senderId, senderNewAmount);
+            // 4. 更新receiver余额
+            accountRepository.updateAmount(receiverId, receiverNewAmount);
+        }
+    }
+    ```
+
+* controller层
+
+  * GET - /accounts - getAllAccount() - 获取所有account信息
+
+  * POST - /transfer - transferMoney(@RequestBody TransferRequest transferRequest) - 进行转账
+
+    ```java
+    @RestController
+    public class AccountController {
+        private final AccountService accountService;
+    
+        public AccountController(AccountService accountService) {
+            this.accountService = accountService;
+        }
+    
+        @GetMapping("/accounts")
+        public List<Account> getAllAccount() {
+            return accountService.getAllAccount();
+        }
+    
+        @PostMapping("/transfer")
+        public void transferMoney(@RequestBody TransferRequest transferRequest) {
+            accountService.transferMoney(transferRequest.getSenderId(),
+                    transferRequest.getReceiverId(),
+                    transferRequest.getAmount());
+        }
+    }
+    ```
+
+* DTO
+
+  The TransferRequest object simply models the HTTP request body. Such objects, whose responsibility is to model the data transferred between two apps, are DTOs.
+
+  * TransferRequest
+
+    ```java
+    public class TransferRequest {
+        private long senderId;
+        private long receiverId;
+        private BigDecimal amount;
+    
+        // omitted getter & setter
+    }
+    ```
+
+* 测试效果
+
+  * 事务内部无异常
+
+    转帐前
+
+    ![image-20251218202159814](asset/image-20251218202159814.png)
+
+    Hellen向Peter转账100元
+
+    ![image-20251218202218715](asset/image-20251218202218715.png)
+
+    转账成功后
+
+    ![image-20251218202229100](asset/image-20251218202229100.png)
+
+  * 事务内部抛出异常
+
+    在service方法手动抛出异常
+
+    ```java
+    @Transactional  // 涉及多次DB操作 这多个操作组成一个事务
+    public void transferMoney(long senderId, long receiverId, BigDecimal amount) {
+        // 1. 获取sender信息
+        Account senderAccount = accountRepository.findAccountById(senderId);
+        // 2. 获取receiver信息
+        Account receiverAccount = accountRepository.findAccountById(receiverId);
+        // 3. 计算sender最新余额
+        BigDecimal senderNewAmount = senderAccount.getAmount().subtract(amount);
+        // 4. 计算receiver最新余额
+        BigDecimal receiverNewAmount = receiverAccount.getAmount().add(amount);
+        // 3. 更新sender余额
+        accountRepository.updateAmount(senderId, senderNewAmount);
+        // 4. 更新receiver余额
+        accountRepository.updateAmount(receiverId, receiverNewAmount);
+    
+        throw new RuntimeException("oops..出现了异常");
+    }
+    ```
+
+    转帐前
+
+    ![image-20251218202531533](asset/image-20251218202531533.png)
+
+    Hellen向Peter转账100元（抛出异常）
+
+    ![image-20251218202542817](asset/image-20251218202542817.png)
+
+    ![image-20251218202557241](asset/image-20251218202557241.png)
+
+    转账失败后（数据进行了回滚，和事务前完全一致。）
+
+    ![image-20251218202641183](asset/image-20251218202641183.png)
