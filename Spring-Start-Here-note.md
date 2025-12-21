@@ -1,4 +1,4 @@
-1. Spring Framework
+# 1. Spring Framework
 
 ## 1.1 为什么需要框架
 
@@ -5470,3 +5470,425 @@ Spring的事务机制是只有当捕获到 `RuntimeException` 异常才会进行
     转账失败后（数据进行了回滚，和事务前完全一致。）
 
     ![image-20251218202641183](asset/image-20251218202641183.png)
+
+
+
+# 14. Spring Data
+
+## 14.1 Spring Data是什么
+
+- 在实际开发中，实现持久层可以采用多种不同的技术方案。
+   对于关系型数据库，常见的访问方式包括 JDBC、Hibernate、MyBatis 等；
+   对于 MongoDB 这类非关系型数据库，则需要使用另一套专门的数据访问技术；
+   而对于 Neo4j 等图数据库，又会对应一套全新的访问方式。
+
+  总体来说，不同类型的数据库通常需要调用不同库提供的 API，并采用各自不同的连接和访问方式。即使是同一种数据库，也往往存在多种访问路径，例如既可以直接通过 JDBC 连接 MySQL，也可以通过 Hibernate 或 MyBatis 这类基于 JDBC 封装的框架来进行访问。
+
+  因此，当项目需要同时接入多种类型的数据库时，开发者通常需要分别学习并使用多套数据访问技术，持久层的复杂度和学习成本都会显著提高。
+
+  ![image-20251221122004290](asset/image-20251221122004290.png)
+
+- Spring Data 在各类数据库访问技术之上提供了一层统一的抽象，通过一组风格一致的 Repository 接口，屏蔽了不同数据库和不同数据访问技术之间的底层 API 差异。
+   无论底层使用的是基于 JDBC 的关系型数据库访问方式，还是基于 Hibernate 的 JPA，亦或是用于 MongoDB 等非关系型数据库的访问技术，Spring Data 都提供了相似的 Repository 接口模型和使用方式。
+
+  通过使用 Spring Data，开发者可以以统一的接口和编程模型来编写持久层代码，从而减少对具体数据库驱动和访问 API 的直接依赖。当底层数据存储发生变化时，例如从 MySQL 切换到 MongoDB，只需引入对应的 Spring Data 模块（如从 Spring Data JDBC 切换为 Spring Data MongoDB），上层基于 Repository 的代码通常可以保持较高的复用度。
+   相比之下，如果不使用 Spring Data，开发者往往需要直接面对 JDBC 或各类数据库驱动提供的不同 API，在切换数据存储类型时，持久层代码的改动成本会显著增加。
+
+  ![image-20251221145959302](asset/image-20251221145959302.png)
+
+- Spring Data 的本质是在不同数据库访问技术之上提供了一层统一的抽象，使开发者无需直接关心底层数据库驱动和具体 API 的调用方式，只需通过 Spring Data 提供的统一接口来完成数据访问操作。
+   通过这种方式，开发者可以将更多精力放在业务逻辑的实现上，而不必过多关注底层数据访问细节，从而提升开发效率和代码的可维护性。
+
+## 14.2 Spring Data如何工作
+
+1. Spring Data 并不是单一的一个依赖包，而是一个“伞式”项目，包含多个针对不同数据存储技术的模块。
+   换句话说，并不存在一个叫做 `spring-data` 的统一依赖，而是根据具体的数据存储类型选择对应的 Spring Data 模块。
+
+   例如：
+
+   - 如果要访问关系型数据库，可以引入 **Spring Data JDBC** 或 **Spring Data JPA** 的依赖；
+   - 如果要访问 MongoDB，则可以引入 **Spring Data MongoDB** 的依赖。
+
+   Spring Data 支持的完整模块列表可以在官方文档网站查看`https://www.spring-doc.cn/projects/spring-data#overview`。
+
+2. Spring Data底层是如何工作的？
+
+   它的底层定义了三个基础接口，关系如图：![image-20251221163414463](asset/image-20251221163414463.png)这三个接口的区别是：
+
+   * `Repository` 接口本身并不定义任何方法，它仅作为一个**标记接口（marker interface）**存在。一个接口如果继承了 `Repository`，仅表示它是一个 Spring Data Repository。通常情况下，我们不会直接继承该接口。
+
+     ```java
+     @Indexed
+     public interface Repository<T, ID> {
+     }
+     ```
+
+   * `CrudRepository` 在 `Repository` 的基础上定义了常用的 **CRUD（增删改查）** 方法。一个接口只要继承了 `CrudRepository`，就可以自动获得这些基础的数据访问能力。
+
+     ```java
+     @NoRepositoryBean
+     public interface CrudRepository<T, ID> extends Repository<T, ID> {
+         <S extends T> S save(S entity);
+     
+         <S extends T> Iterable<S> saveAll(Iterable<S> entities);
+     
+         Optional<T> findById(ID id);
+     
+         boolean existsById(ID id);
+     
+         Iterable<T> findAll();
+     
+         Iterable<T> findAllById(Iterable<ID> ids);
+     
+         long count();
+     
+         void deleteById(ID id);
+     
+         void delete(T entity);
+     
+         void deleteAllById(Iterable<? extends ID> ids);
+     
+         void deleteAll(Iterable<? extends T> entities);
+     
+         void deleteAll();
+     }
+     ```
+
+     
+
+   * `PagingAndSortingRepository` 又在 `CrudRepository` 的基础上，进一步提供了 **分页和排序** 相关的方法，适用于需要分页查询或排序能力的场景。
+
+     ```java
+     @NoRepositoryBean
+     public interface PagingAndSortingRepository<T, ID> extends CrudRepository<T, ID> {
+         Iterable<T> findAll(Sort sort);
+     
+         Page<T> findAll(Pageable pageable);
+     }
+     ```
+
+     在使用 Spring Data 时，通常会定义一个 Repository 层的 接口，并继承 Spring Data 提供的这三个 Repository 接口之一。
+      开发者无需为该接口编写具体实现，Spring Data 会在运行时自动生成对应的实现类，并将其实例注册为 Spring 容器中的 Bean，从而可以在应用的其他位置通过依赖注入的方式直接使用。
+
+     例如，如果我们定义了一个接口 A 并继承自 `CrudRepository`，Spring Data 会自动为接口 A 生成一个实现类，该实现类会实现接口中定义的所有方法。同时，Spring Data 还会负责创建该实现类的实例并将其纳入 Spring 容器管理。在 Service 层中，我们只需注入该 Repository Bean，即可完成对数据的访问操作。
+
+3. 当然这些接口仅仅提供了一些最简单、最常用的方法，如果有特殊需求，当然也是可以自定义方法的。
+
+   在自定义接口中可以定义方法，通过@Query注解声明SQL语句，如果是涉及DB修改的操作，还需要增加上@Modifying注解。
+
+   在14.3会有具体的示例介绍。
+
+4. 对于一些数据库，它有一些更加特殊的使用方式，Spring Data也提供了对应的接口。
+
+   例如，当我们引入 Spring Data MongoDB 时，在 Spring Data 提供的通用 Repository 接口（如 `CrudRepository`、`PagingAndSortingRepository`）之上，还会额外提供一个 `MongoRepository` 接口。
+    `MongoRepository` 继承自 `PagingAndSortingRepository`，并在此基础上扩展了一些 MongoDB 特有的能力，这些能力是其他关系型数据库持久化技术所不具备的。
+
+   在实际应用中，如果系统使用的是 MongoDB，通常会涉及到这些与 MongoDB 特性强相关的使用方式。因此，在定义持久层接口时，往往会选择继承 `MongoRepository`，以便直接使用其提供的 MongoDB 专有方法，而不是仅依赖通用的 Repository 接口。![image-20251221165058065](asset/image-20251221165058065.png)
+
+   
+
+==注意：==
+
+* Spring Data JDBC、Spring Data JPA的关系是什么
+
+  * ORM是什么
+
+    * ORM（Object-Relational Mapping，对象关系映射）是一种编程技术，它在面向对象语言（如Java、Python）的**对象**和关系型数据库（如MySQL、PostgreSQL）的**数据表**之间建立映射关系，让开发者能用操作对象的方式来操作数据库，而无需直接写繁琐的SQL语句，从而减少重复代码、提高开发效率。它将数据库的行、列、表等概念映射到类、属性、对象，实现数据的自动持久化（增删改查）。
+    * ORM的核心思想与工作原理
+      1. 映射关系：定义一个类（Class）对应数据库中的一个表（Table），类的属性（Attributes）对应表中的字段（Columns），类的对象（Object）代表表中的一行数据（Row）。
+      2. 自动转换：当程序操作对象时（例如，调用一个`save()`方法），ORM框架会把对象的状态转换为对应的SQL语句，然后执行它；反之，从数据库查询数据时，ORM会把结果集转换成对象。
+      3. 隐藏SQL：开发者主要与对象和类打交道，ORM框架在底层负责生成和执行SQL，使得数据访问变得更加简单、安全。 
+
+  * JPA是什么
+
+    ORM是一种思想，JPA是Java官方定义的一套ORM规范。
+
+    举例，JPA定义了Entity类必须要满足的要求：
+
+    1. 必须要用@Entity注解声明
+    2. 必须要有public/protected类型的无参构造器
+    3. 不能是final类
+    4. ...
+
+  * Hibernate是什么
+
+    JPA是一套ORM规范，Hibernate是JPA的实现
+
+  * JDBC 和 JPA的区别
+
+    * JDBC是Java定义的一系列操作DB的API抽象
+    * JPA（Java Persistence API）是Java的ORM规范， JPA底层依然是使用JDBC来实现DB操作，只不过JPA在此基础上，实现了ORM思想，以提升开发效率。
+
+  * Spring Data JDBC和Spring Data JPA的关系
+
+    这是两种持久层的实现。
+
+    如果你想用JDBC实现持久层，则引入Spring Data JDBC。
+
+    如果你想用JPA实现持久层，则引入Spring Data JPA，Spring Data JPA底层默认使用Hibernate实现。
+
+* Spring Data中的Repository接口和@Repository的关系
+
+  没有关系
+
+  @Repository注解是标识告知Spring要创建这个类的bean并加入Spring容器。
+
+  Spring Data中的Repository接口就是一个接口。
+
+* Hibernate、MyBatis是什么关系
+
+  Hibernate 和 MyBatis 都是用于数据库访问的 Java 持久层框架，它们的共同目标都是提升开发效率，避免开发者直接使用繁琐的 JDBC API。
+
+  * Hibernate基于ORM思想实现，思维方式是：操作对象，SQL的生成由框架负责。【面向对象的ORM思路】
+  * Mybatis不基于ORM实现，思维方式是：以SQL为核心，由开发者编写SQL，框架只负责参数绑定和结果映射。【面向SQL的映射思路】
+  * 选型：Mybatis适合SQL复杂、性能要求高的场景。SQL复杂，手写可控性强；性能要求高，手写SQL更容易做针对性优化。Hibernate适合以简单的CRUD为主，追求开发效率的业务场景。
+
+## 14.3 Spring Data的使用
+
+通过一个示例来介绍Spring Data的使用。
+
+* 业务需求：
+
+  实现一个电子钱包。能够实现：
+
+  1. 转账
+  2. 查询所有用户的余额信息
+  3. 根据name查询用户的余额信息
+
+* 代码设计
+
+  * 数据库设计
+
+    以教学为目的，使用h2。
+
+    * schema.sql
+
+      ```sql
+      create table account (
+           id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+           name VARCHAR(50) NOT NULL,
+           amount DOUBLE NOT NULL
+      );
+      ```
+
+    * data.sql 初始时插入两条数据便于演示
+
+      ```sql
+      INSERT INTO account VALUES (NULL, 'Jane Down', 1000);
+      INSERT INTO account VALUES (NULL, 'John Read', 1000);
+      ```
+
+  * pom.xml
+
+    引入三个依赖：
+
+    1. web因为我们要提供restful接口供外界调用 
+    2. spring-data-jdbc 因为我们要用jdbc来实现和db的连接
+    3. h2数据库的依赖 内部已包含h2 jdbc driver
+
+    ```xml
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-data-jdbc</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>com.h2database</groupId>
+        <artifactId>h2</artifactId>
+        <scope>runtime</scope>
+    </dependency>
+    ```
+
+  * model
+
+    Account（和account表对应）
+
+    ```java
+    public class Account {
+        @Id
+        private long id;
+        private String name;
+        private BigDecimal amount;
+        
+        // omitted getters & setters
+    }
+    ```
+
+    ==使用SpringData，需要用@Id注解标识哪一个字段对应表的主键。==
+
+  * repository层
+
+    继承CrudRepository接口，需要提供两个泛型类型：<表对应的model类, 主键类型> --> \<Account, id>
+
+    
+
+    * CrudRepository接口已经提供了的方法，我们可以直接使用。
+    * CrudRepository接口没有提供的方法，我们可以自定义。
+      * 通过@Query注解来标识SQL语句；
+      * 如果是增删改这类数据库的更改操作，需要进一步增加@Modifying注解。
+      * 注意SQL语句中`:name` 的`:`和`name`之间没有空格
+      * @Param负责将Java参数和SQL语句中的占位符进行对应
+
+    ```java
+    public interface AccountRepository extends CrudRepository<Account, Long> {
+    
+        @Query("SELECT * FROM account WHERE name = :name")
+        public List<Account> findByName(@Param("name") String name);
+    
+        @Modifying
+        @Query("UPDATE account SET amount = :amount where id = :id")
+        public void updateAmount(@Param("id") long id, @Param("amount") BigDecimal amount);
+    
+    }
+    ```
+
+    继承了SpringData提供的接口之后，SpringData会自动创建实现类，并且创建一个Bean添加到Spring容器中。
+
+  * service层
+
+    ```java
+    @Service
+    public class TransferService {
+        private final AccountRepository accountRepository;
+    
+        public TransferService(AccountRepository accountRepository) {
+            this.accountRepository = accountRepository;
+        }
+    
+        /**
+         * 转账
+         *
+         * @param senderId 转出者Id
+         * @param receiverId 接收者Id
+         * @param amount 转账金额
+         */
+        @Transactional
+        public void transferMoney(long senderId, long receiverId, BigDecimal amount) {
+            // 1. 查询转出者和接收者的信息
+            Account sender = accountRepository.findById(senderId)
+                    .orElseThrow(() -> new AccountNotExistException());
+            Account receiver = accountRepository.findById(receiverId)
+                    .orElseThrow(() -> new AccountNotExistException());
+            // 2. 计算转出者和接收者的最新余额信息
+            BigDecimal senderNewAmount = sender.getAmount().subtract(amount);
+            BigDecimal receiverNewAmount = sender.getAmount().add(amount);
+            // 3. 更新两者的余额
+            accountRepository.updateAmount(senderId, senderNewAmount);
+            accountRepository.updateAmount(receiverId, receiverNewAmount);
+        }
+    
+        /**
+         * 获取所有Account信息
+         * @return Account信息列表
+         */
+        public Iterable<Account> findAllAccounts() {
+            return accountRepository.findAll();
+        }
+    
+        /**
+         * 根据用户名查询Account信息
+         * @param name 用户名
+         * @return Account信息列表
+         */
+        public List<Account> findAccountsByName(String name) {
+            return accountRepository.findByName(name);
+        }
+    }
+    ```
+
+    ```java
+    public class AccountNotExistException extends RuntimeException{
+    }
+    ```
+
+  * controller层
+
+    ```java
+    @RestController
+    public class AccountController {
+        private final TransferService transferService;
+    
+        public AccountController(TransferService transferService) {
+            this.transferService = transferService;
+        }
+    
+        @PostMapping("/transfer")
+        public void transferMoney(@RequestBody TransferRequest transferRequest) {
+            transferService.transferMoney(transferRequest.getSenderId(),
+                    transferRequest.getReceiverId(),
+                    transferRequest.getAmount());
+        }
+    
+        @GetMapping("/accounts")
+        public Iterable<Account> findAccounts(@RequestParam(required = false) String name) {
+            if (name == null) {
+                return transferService.findAllAccounts();
+            } else {
+                return transferService.findAccountsByName(name);
+            }
+        }
+    }
+    ```
+
+  * dto
+
+    ```java
+    public class TransferRequest {
+        private long senderId;
+        private long receiverId;
+        private BigDecimal amount;
+    
+        // Omitted getters and setters
+    }
+    
+    ```
+
+* 实现效果：
+
+  转帐前
+
+  ![image-20251221182352548](asset/image-20251221182352548.png)
+
+  转账
+
+  ![image-20251221182412052](asset/image-20251221182412052.png)
+
+  转账后
+
+  ![image-20251221182422421](asset/image-20251221182422421.png)
+
+  根据用户名查询
+
+  ![image-20251221182440282](asset/image-20251221182440282.png)
+
+==注意：==
+
+* SpringData能够根据方法名自动推测SQL语句
+
+  在上面的例子中，如果我们想在CrudRepository接口定义的方法之外再自定义一些方法，我们是通过定义方法，然后通过@Query注解来指定对应的SQL语句。
+
+  其实我们还可以通过规范的方法名，让Spring Data明白我们的意图，这样甚至连SQL语句都不用写了。
+
+  例如定义一个通过Name来查找Account信息的方法
+
+  ```java
+  public interface AccountRepository
+  extends CrudRepository<Account, Long> {
+      List<Account> findAccountsByName(String name);
+  }
+  ```
+
+  通过定义这个方法名，Spring Data能够自动解析出对应的SQL语句
+
+  ![image-20251221203728801](asset/image-20251221203728801.png)
+
+  这种方法虽然很简单，但是并不推荐使用：
+
+  * 如果我们想实现的操作比较复杂，则方法名会非常长且复杂，可读性不佳
+  * 如果有人不小心修改了方法名，对背后机制的影响并不明显可见，可能导致出现潜在的bug
+  * 拖慢启动的速度，启动时Spring Data需要将方法名翻译为SQL语句，影响性能
+
+  因此，最好的方式还是我们显式地将SQL语句写出来，这样可读性也更加好。
