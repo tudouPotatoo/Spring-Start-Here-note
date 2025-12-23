@@ -5892,3 +5892,574 @@ Spring的事务机制是只有当捕获到 `RuntimeException` 异常才会进行
   * 拖慢启动的速度，启动时Spring Data需要将方法名翻译为SQL语句，影响性能
 
   因此，最好的方式还是我们显式地将SQL语句写出来，这样可读性也更加好。
+
+
+
+# 15. Testing your Spring App
+
+## 15.1 测试名词
+
+* Regression Testing 回归测试
+
+  * 是什么：确保在修改代码/修复bug/增加新功能之后，旧功能依然能够正常工作，没有被“改坏”。
+
+  * 策略：由于项目越来越大，每次改动都把成千上万个测试用例跑一遍是不现实的。
+
+    * **完全回归测试**：跑完所有的测试用例。安全但耗时极长，通常只在发布大版本前执行。
+    * **选择性回归测试**：只跑那些“可能会受到影响”的相关模块。
+    * **基于优先级的回归测试**：优先跑核心业务流程（如登录、下单、支付），次要功能排后。
+
+  * 自动化：回归测试的一个显著特点是 **“重复性”**。同样的用例，每次改代码都要跑一遍。
+
+    * **人工回归**：极其枯燥且容易出错（人会疲劳）。
+
+      **自动化回归**：编写测试脚本（如 JUnit, Selenium 等）。一旦代码提交，机器几分钟内就能跑完所有核心流程。
+
+* 单元测试：验证最小单位的功能块（通常是方法）是否正确运行
+
+* 冒烟测试：验证系统最核心的功能（能不能启动、能不能登录）是否可用。
+
+* Integration Testing 集成测试
+
+  * 是什么：验证不同模块（组件）组合在一起后，它们之间的交互和接口是否正确。如果说单元测试是检查“每个零件”是否合格，那么集成测试就是检查这些零件“拼在一起”后能不能正常运转。
+  * 为什么要进行集成测试：即使每个单元（类、方法）单独测试都是完美的，但它们组合在一起时仍可能出错，常见原因包括：
+    - **数据流丢失**：模块 A 传给模块 B 的参数格式不对（例如 A 传了 String，B 接收 Long类型）。
+    - **接口不匹配**：开发者对接口定义的理解不一致。
+    - **外部依赖问题**：无法与数据库、缓存或第三方 API 正确通信。
+    - **框架配置错误**：比如 Spring 的 Bean 注入失败、事务配置没起作用。
+
+* Spring Integration Test：在Spring容器环境下进行的集成测试。
+
+  * 特点：
+    * **加载上下文**：它会启动 Spring 的 `ApplicationContext`。
+    * **依赖注入**：它会自动把 `@Service`、`@Repository` 等组件装配在一起，就像真实运行程序一样。
+    * **真实性**：你可以测试真实的数据库连接、事务管理（`@Transactional`）和 Bean 的生命周期。
+  * 作用：验证当所有的代码组件（Beans）组合在一起并运行在 Spring 环境中时，它们是否能正确地协同工作。
+
+* CI/CD
+
+  * CI（Continuous Integration）持续集成：
+
+    * 是什么：开发人员每天会多次将代码推送到主干仓库。每当代码更新时，CI 系统会自动执行以下操作：
+
+      * **自动化构建**：编译代码，确保没有语法错误。
+      * **自动化测试**：运行单元测试和集成测试。
+      * **代码质量检查**：检查代码风格、潜在漏洞。
+
+      ![image-20251223112245761](asset/image-20251223112245761.png)
+
+    * 为什么：
+
+      * **集成（Integration）**：在过去，程序员各自写代码，几个月才合并一次。合并时会发现成千上万个冲突，这个痛苦的过程被称为“集成地狱”。
+      * **持续（Continuous）**：现在，我们不再等几个月，而是每写完一个小功能、甚至一个修复，就立刻合并。通过这种高频率，让“集成”变成一件日常的小事。
+
+  * CD (Continuous Delivery) 持续交付：**确保代码随时可以发布。**在 CI 完成并测试通过后，持续交付会将代码自动部署到“类生产环境”（如测试环境或预发布环境）。
+
+  * CD (Continuous Deployment) 持续部署：全自动化发布到生产环境，无需人工干预。
+
+
+
+## 15.2 单元测试的正确思路
+
+1. **单元测试代码写在哪里**
+
+   在test文件夹中编写
+
+   ![image-20251223114809217](asset/image-20251223114809217.png)
+
+2. **单元测试代码怎么写（理论）**（实践在15.3）
+
+   对于每一个要测试的方法，编写一个test class来专门负责这个方法的测试
+
+   每一个要测试的方法，根据输入的不同，可能会有不同的执行情况。对于所有的执行情况，单元测试都应该要全部覆盖到。
+
+   对于每一种情况，用一个测试方法验证。
+
+   例如ch14中的转账方法transferMoney，执行逻辑包含4步：
+
+   1. 根据senderId在Account表中查询sender信息
+   2. 根据receiverId在Account表中查询receiver信息
+   3. 分别sender和receiver转账后最新余额
+   4. 更新sender和receiver的余额信息
+
+   针对这一个要测试的方法，就可以找到以下多种测试场景：
+
+   1. 查询不到sender信息
+   2. 查询不到receiver信息
+   3. sender转账余额不足
+   4. 更新sender余额信息失败
+   5. 更新receiver余额信息失败
+   6. 转账执行成功
+
+   那一个完整的单元测试，应该是一个类TransferMoneyUnitTest负责TransferMoney()方法的测试。这个类中包含6个方法，分别验证上面的6中场景的代码执行是否符合预期。
+
+   ![image-20251223115736886](asset/image-20251223115736886.png)
+
+## 15.3 编写单元测试
+
+以编写transferMoney方法的单元测试为例：
+
+transferMoney方法
+
+```java
+@Service
+public class TransferService {
+    private final AccountRepository accountRepository;
+
+    public TransferService(AccountRepository accountRepository) {
+        this.accountRepository = accountRepository;
+    }
+
+    @Transactional
+    public void transferMoney(long senderId,
+                              long receiverId,
+                              BigDecimal amount) {
+        // 1. 获取sender和receiver信息
+        Account sender = accountRepository.findById(senderId)
+                .orElseThrow(() -> new AccountNotFoundException());
+        Account receiver = accountRepository.findById(receiverId)
+                .orElseThrow(() -> new AccountNotFoundException());
+        // 2. 计算sender和receiver转账后的余额信息
+        BigDecimal senderNewAmount = sender.getAmount().subtract(amount);
+        BigDecimal receiverNewAmount = receiver.getAmount().add(amount);
+        // 3. 更新sender和receiver余额信息
+        accountRepository.changeAmount(senderId, senderNewAmount);
+        accountRepository.changeAmount(receiverId, receiverNewAmount);
+    }
+}
+```
+
+有下列6中情形，每一种情形都需要写一个对应的单测方法。
+
+1. 查询不到sender信息
+2. 查询不到receiver信息
+3. sender转账余额不足
+4. 更新sender余额信息失败
+5. 更新receiver余额信息失败
+6. 转账执行成功
+
+### happy flow
+
+先以【转账执行成功】这个最容易想到的情形来编写单测，编写一个单测方法总共需要三步：
+
+1. given: 准备前提条件。
+   1. 这个方法的input参数
+   2. Object instances the method uses but that are not created by it
+2. when: 执行这个方法。
+3. then:验证结果是否符合预期
+
+
+
+1. given: 准备前提条件。
+
+   1. 这个方法的input参数：senderId、receiverId、amount
+   2. Object instances the method uses but that are not created by it：accountRepository
+
+   ![image-20251223163441180](asset/image-20251223163441180.png)
+
+   这里我们只想测试service层的transferMoney()这个方法，但这个方法本身依赖accountRepository这个bean执行findById这个方法的结果。
+
+   我们并不关注accountRepository.findById这个方法的执行如何。因为单元测试是关注最小单元，当前我们关注的最小单元就是service层的transferMoney()这个方法。
+
+   因此我们不用注入真实的accountRepository bean，而是mock一个bean，这个mocked bean的行为能够被完全控制，因此这个单测方法可以仅专注于transferMoney这个方法的执行。
+
+   ![image-20251223165438946](asset/image-20251223165438946.png)
+
+   mock出了accountRepository这个bean之后，怎么控制它的行为？
+
+   我们可以通过==given()方法==，来控制其行为
+
+   ![image-20251223165542394](asset/image-20251223165542394.png)
+
+2. when: 执行这个方法
+
+3. then: 预期结果是怎么样的。
+
+   预期的结果是accountRepository会以正确的参数调用changeAmount方法，用==verify()方法==进行校验校验
+
+   ![image-20251223170508341](asset/image-20251223170508341.png)
+
+   感觉这里似乎并不符合直觉，直觉应该是校验sender的amount是否变成了900以及receiver的amount是否变成了1100。
+
+   但实际上，如果我们执行`assertEquals(new BigDecimal(900), sender.getAmount());`结果一定是失败的，因为
+
+   第一，在transferMoney中，我们是获取sender信息-->计算最新余额-->直接更新DB中sender这条记录的最新余额。所以本质上，代码中并没有更新sender对象的amount属性值。
+
+   ```java
+   @Transactional
+   public void transferMoney(long senderId,
+                             long receiverId,
+                             BigDecimal amount) {
+       // 1. 获取sender和receiver信息
+       Account sender = accountRepository.findById(senderId)
+           .orElseThrow(() -> new AccountNotFoundException());
+       Account receiver = accountRepository.findById(receiverId)
+           .orElseThrow(() -> new AccountNotFoundException());
+       // 2. 计算sender和receiver转账后的余额信息
+       BigDecimal senderNewAmount = sender.getAmount().subtract(amount);
+       BigDecimal receiverNewAmount = receiver.getAmount().add(amount);
+       // 3. 更新sender和receiver余额信息
+       accountRepository.changeAmount(senderId, senderNewAmount);
+       accountRepository.changeAmount(receiverId, receiverNewAmount);
+   }
+   ```
+
+   第二，因为我们用的accountRepository对象是mock出来的，是一个假的对象，因此它也不会去真正更新DB，也不会反过来更新sender对象。
+
+   第三，`AccountRepository` 是 Service 的下级。 Service 的职责不是“改变账户余额”，而是“计算出余额并下达更新指令”。所以我们验证service，只需要验证service是否成功下达了正确的指令，而不是关注指令是否正确地被执行了，这是AccountRepository的单元测试需要关注的事。
+
+   
+
+总结一下最后的happyflow 单元测试代码：
+
+```java
+public class TransferMoneyUnitTest {
+    @Test
+    @DisplayName("Test the amount is transferred from one account to another if no exception occurs.")
+    public void transferMoneyHappyFlow() {
+        // 1. given
+        AccountRepository accountRepository = mock(AccountRepository.class);
+        TransferService transferService = new TransferService(accountRepository);
+
+        Account sender = new Account();
+        sender.setId(1);
+        sender.setAmount(new BigDecimal(1000));
+
+        Account receiver = new Account();
+        receiver.setId(2);
+        receiver.setAmount(new BigDecimal(1000));
+
+        // 如果调用accountRepository.findById(sender.getId()) -> 就返回sender对象
+        given(accountRepository.findById(sender.getId()))
+                .willReturn(Optional.of(sender));
+        given(accountRepository.findById(receiver.getId()))
+                .willReturn(Optional.of(receiver));
+
+        // 2. when
+        transferService.transferMoney(sender.getId(), receiver.getId(), new BigDecimal(100));
+
+        // 3. then
+        verify(accountRepository)
+                .updateAmount(sender.getId(), new BigDecimal(900));
+        verify(accountRepository)
+                .updateAmount(receiver.getId(), new BigDecimal(1100));
+
+    }
+}
+```
+
+除了调用Mock()方法之外，还能够通过注解的方式创建mock对象。
+
+@Mock注解，mockito框架会自动创建一个mock对象，并注入对应的变量中。
+
+@InjectMocks注解，mockito框架会自动创建要test的对象，并将被@Mock注解标注的对象都注入到被@InjectMocks注解标注的对象的属性中。按下面的例子，也就是把accountRepository注入到transferService的属性中去。
+
+如果要@Mock和InjectMocks注解生效，还需要在单测类上增加@ExtendWith(MockitoExtension.class)注解。
+
+```java
+@ExtendWith(MockitoExtension.class)
+public class TransferMoneyUnitTestWithAnnotation {
+    @Mock
+    private AccountRepository accountRepository;
+
+    @InjectMocks
+    private TransferService transferService;
+
+    @Test
+    public void transferMoneyHappyFlow() {
+
+        // 1. given
+        Account sender = new Account();
+        sender.setId(1);
+        sender.setAmount(new BigDecimal(1000));
+
+        Account receiver = new Account();
+        receiver.setId(2);
+        receiver.setAmount(new BigDecimal(1000));
+
+        // 如果调用accountRepository.findById(sender.getId()) -> 就返回sender对象
+        given(accountRepository.findById(sender.getId()))
+                .willReturn(Optional.of(sender));
+        given(accountRepository.findById(receiver.getId()))
+                .willReturn(Optional.of(receiver));
+
+        // 2. when
+        transferService.transferMoney(sender.getId(), receiver.getId(), new BigDecimal(100));
+
+        // 3. then
+        verify(accountRepository)
+                .updateAmount(sender.getId(), new BigDecimal(900));
+        verify(accountRepository)
+                .updateAmount(receiver.getId(), new BigDecimal(1100));
+        
+    }
+}
+```
+
+
+
+总结测试的三步走策略：
+
+1. given: 准备前提条件。
+   1. 这个方法的input参数
+   2. Object instances the method uses but that are not created by it
+2. when: 执行这个方法。
+3. then:验证结果是否符合预期
+
+![image-20251223174131241](asset/image-20251223174131241.png)
+
+### exception flow
+
+以【查询不到sender信息】为场景编写exception flow单测。
+
+`assertThrows()`方法会调用目标方法，并验证是否抛出了符合预期的异常。
+
+```java
+@ExtendWith(MockitoExtension.class)
+public class TransferMoneyUnitTestWithAnnotation {
+    @Mock
+    private AccountRepository accountRepository;
+
+    @InjectMocks
+    private TransferService transferService;
+
+    @Test
+    public void transferMoneyExceptionFlow() {
+        //1. 控制mock的对象的行为
+        Account sender = new Account();
+        sender.setId(1);
+        sender.setAmount(new BigDecimal(1000));
+
+        given(accountRepository.findById(sender.getId()))
+                .willReturn(Optional.of(sender));
+        given(accountRepository.findById(2L))
+                .willReturn(Optional.empty());
+
+        // 2. 调用单测目标方法
+        // 预期抛出AccountNotExistException.class异常
+        assertThrows(AccountNotExistException.class,
+                () -> transferService.transferMoney(sender.getId(), 2L, new BigDecimal(100))
+        );
+
+        // 3. 验证结果
+        // We use the verify() method with the never() conditional to assert that
+        // the changeAmount() method hasn't been called
+        verify(accountRepository, never())
+                .updateAmount(anyLong(), any());
+
+    }
+}
+```
+
+### 验证方法返回值符合预期
+
+`assertEquals(Object excepted, Object actual);`这个方法能够校验方法返回值是否符合预期。
+
+示例代码：为LoginController的loginPost方法编写单测
+
+```java
+@Controller
+public class LoginController {
+
+    private final LoginProcessor loginProcessor;
+
+    LoginController(LoginProcessor loginProcessor) {
+        this.loginProcessor = loginProcessor;
+    }
+
+    @PostMapping("/")
+    public String loginPost(
+            @RequestParam String username,
+            @RequestParam String password,
+            Model model
+    ) {
+        loginProcessor.setUsername(username);
+        loginProcessor.setPassword(password);
+        boolean loggedIn = loginProcessor.login();
+        if (loggedIn) {
+            model.addAttribute("message", "you are now logged in.");
+        } else {
+            model.addAttribute("message", "Login failed!");
+        }
+        return "login.html";
+    }
+}
+```
+
+1. given: 准备前提条件。
+
+   1. 这个方法的input参数
+
+      username, password
+
+   2. Object instances the method uses but that are not created by it
+
+      * LoginProcessor bean，需要控制 `loginProcessor.login();` 的执行结果
+      * model 对象
+
+2. when: 执行这个方法。
+
+3. then:验证结果是否符合预期
+
+   * 登陆成功
+     * 执行了 `model.addAttribute("message", "you are now logged in.");`
+     * loginPost方法返回了`login.html`字符串
+   * 登陆失败
+     * 执行了 ` model.addAttribute("message", "Login failed!");`
+     * loginPost方法返回了`login.html`字符串
+
+单测代码：
+
+```java
+@ExtendWith(MockitoExtension.class)
+public class LoginControllerLoginPostUnitTests {
+    @Mock
+    private Model model;  // given
+    @Mock
+    private LoginProcessor loginProcessor;  // given
+    @InjectMocks
+    private LoginController loginController;  // given
+
+    // 登陆成功
+    @Test
+    public void loginPostLoginSuccessTest() {
+        // 1. given
+        given(loginProcessor.login())
+                .willReturn(true);
+        // 2. when
+        String result = loginController.loginPost("username", "password", model);
+        // 3. then
+        assertEquals("login.html", result);
+        verify(model)
+                .addAttribute("message", "you are now logged in.");
+    }
+
+    // 登陆失败
+    @Test
+    public void loginPostLoginFailTest() {
+        // 1. given
+        given(loginProcessor.login())
+                .willReturn(false);
+        // 2. when
+        String result = loginController.loginPost("username", "password", model);
+        assertEquals("login.html", result);
+        // 3. then
+        verify(model)
+                .addAttribute("message", "Login failed!");
+    }
+}
+```
+
+
+
+## 15.4 编写集成测试
+
+单元测试是用于测试代码逻辑的最小单元的（通常是一个方法）。
+
+但是有的时候我们A单元和B单元分别测试通过，而A单元和B单元共同工作的时候，程序出现异常，这就是因为A单元和B单元没有正确地interact with each other。
+
+集成测试就是用于确保多个组件/单元之间，能够正确地interact with each other。
+
+
+
+在Spring项目中，我们会通过Spring integration test来测试Spring提供的功能是否和业务代码能够正常协作。
+
+举例来说就是：依赖注入是否成功、事务是否生效...
+
+我们依然以转账的例子，来写一个Spring integration test，以学习集成测试的思想。
+
+通过这个SpringBoot集成测试，我们可以验证：
+
+1. TransferService Bean被正确注入Spring容器
+2. TransferService的依赖注入配置正确（AccountRepository bean被正确注入TransferService的属性）
+3. 在Spring环境下TtransferMoney方法成功执行
+
+```java
+// 开启SpringBoot测试框架。
+// 添加这个注解，等同于告诉JUnit，不要只运行这个类，请启动整个 Spring 容器（ApplicationContext），
+// 就像我平时运行 main 方法启动程序那样。
+@SpringBootTest
+public class TransferMoneySpringIntegrationTest {
+    // 在 Spring 容器中创建一个 Mock 对象，并用它替换掉容器中原本真实的 Bean
+    // 如果Spring容器中没有AccountRepository类型Bean，则将新的直接放入容器
+    // 如果已经有了，则将其踢出，放入这个Mock的假Bean
+    // 容器中所有依赖这个Bean的地方，拿到的都会是这个mock假bean
+    @MockBean
+    private AccountRepository accountRepository;
+
+    // 注入Spring容器中，真正的transferService Bean
+    // 其属性，被注入的是上面的mock accountRepository bean
+    @Autowired
+    private TransferService transferService;
+
+    @Test
+    @DisplayName("Test the amount is transferred " +
+"from one account to another if no exception occurs.")
+    public void transferMoneyHappyFlow() {
+        // 1. given
+        Account sender = new Account();
+        sender.setId(1);
+        sender.setAmount(new BigDecimal(1000));
+
+        Account receiver = new Account();
+        receiver.setId(2);
+        receiver.setAmount(new BigDecimal(1000));
+
+        given(accountRepository.findById(sender.getId()))
+                .willReturn(Optional.of(sender));
+
+        given(accountRepository.findById(receiver.getId()))
+                .willReturn(Optional.of(receiver));
+
+        // 2. when
+        transferService.transferMoney(sender.getId(), receiver.getId(), new BigDecimal(100));
+
+        // 3. then
+        verify(accountRepository)
+                .updateAmount(sender.getId(), new BigDecimal(900));
+        verify(accountRepository)
+                .updateAmount(receiver.getId(), new BigDecimal(1100));
+    }
+}
+```
+
+
+
+为什么要mock一个假的AccountRepository，而不是用Spring容器中那个真的？
+
+* 这个测试的重点在于，TransferService是否和AccountRepository正确协作，也就是TransferService是否向AccountRepository发出正确的指令。只要AccountRepository成功接受到正确指令即可，至于AccountRepository执行什么逻辑，是否执行正确，是AccountRepository自己的单元测试需要关注的内容。
+* 如果用真的AccountRepository，则必须在数据库准备完整的测试数据。Mock可以完全控制AccountRepository的行为，让测试更加简单。
+* 真实Bean很难模拟出一些极端场景，例如网络超时、连接断开等异常。Mock可以轻松控制mock对象抛出异常，测试回滚逻辑是否有效。
+
+
+
+那集成测试代码和单元测试的代码，都验证了 `TransferService` 是否调用了 `AccountRepository`，那都能够验证两者是否正确集成交互，为什么还需要集成测试这样写？
+
+答：关键的区别在于：**“谁”负责把这两个对象连接在一起。**
+
+* 代码 B (@ExtendWith - 纯 Mockito 单元测试)
+  * 谁在连接对象？ 是 Mockito 框架通过反射硬塞进去的。
+  * 它能证明什么？ 它只能证明：如果 transferService 里有这个 repository，那么它的业务逻辑（加减法）是对的。
+  * 它漏掉了什么？ 它无法证明你的 Spring 配置是否正确。例如，如果你漏写了 @Service 注解，或者构造函数写错了导致 Spring 无法启动，这个测试依然能通过，但你的程序在生产环境会崩溃。
+
+* 代码 A (@SpringBootTest - Spring 集成测试)
+  * 谁在连接对象？ 是真实的 Spring 容器。
+  * 它能证明什么？ 它证明了：
+    * Spring 能成功扫描到TransferService这个Bean。
+    * Spring 能将AccountRepository这个Bean注入到TransferService Bean中。
+    * 如果你有 AOP（切面），比如 @Transactional，Spring 会为 transferService 创建代理对象。这个测试运行的是带代理的对象。因此也就能够验证事务是否正确运行。
+  * 它漏掉了什么？ 它没有真正测试数据库存取（因为 Repository 被 Mock 了）。但是没关系，我们这里只关注SpringBoot和TransferService是否正确协作，并不关注AccountRepository是否正确实现数据库存取。
+
+
+
+@DisplayName是JUint5提供的注解，其作用是让开发者可以用人类可读的语言命名测试，则测试报告会显式这个名字，可读性会更加好，一眼就能看出来这是在测什么。
+
+![image-20251223220233743](asset/image-20251223220233743.png)
+
+
+
+如果我们还想验证事务管理是否生效，可以用内存数据库H2，进行真实测试，验证抛出异常之后，数据库的值是否不变。
+
+==注意：==
+
+* 可测试性和可维护性 相辅相成。 the app’s testability decreases when you fail to separate the different responsibilities into small and easy-to-read methods. 如果一个方法很臃肿，塞了太多逻辑，一方面，这个方法的可维护性不会好，只会越写越长。另一方面， 也不好测试，因为为了覆盖所有路径，必须构造极其复杂的 Mock 数据和前置条件，导致单测编写举步维艰。相反，如果方法只负责最原子的一件小事，则方法不会臃肿，可维护性好。单侧也很好写，因为输入输出极其明确，我们可以用极小的代价实现全场景覆盖。
